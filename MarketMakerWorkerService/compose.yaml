@@ -1,0 +1,7 @@
+﻿services:
+  marketmakerworkerservice:
+    image: marketmakerworkerservice
+    build:
+      context: .
+      dockerfile: MarketMakerWorkerService/Dockerfile
+
