@@ -10,7 +10,12 @@
 
     <ItemGroup>
         <PackageReference Include="DotNetEnv" Version="3.1.1" />
-        <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6"/>
+        <PackageReference Include="Google.Protobuf" Version="3.32.1" />
+        <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6" />
+        <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.6" />
+        <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.6" />
+        <PackageReference Include="StackExchange.Redis" Version="2.9.32" />
+        <PackageReference Include="System.Reactive" Version="6.1.0" />
     </ItemGroup>
 
     <ItemGroup>
@@ -21,5 +26,9 @@
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <Link>.env</Link>
       </None>
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\sdk\Hiero\Hiero\Hiero.csproj" />
     </ItemGroup>
 </Project>

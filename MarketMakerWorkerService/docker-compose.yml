@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  marketmaker:
+    build:
+      context: .
+      dockerfile: MarketMakerWorkerService/Dockerfile
+    container_name: marketmaker-worker
+    restart: unless-stopped
+    environment:
+      # Hedera Configuration
+      - HEDERA_ACCOUNT_ID=${HEDERA_ACCOUNT_ID}
+      - HEDERA_PRIVATE_KEY_DER_HEX=${HEDERA_PRIVATE_KEY_DER_HEX}
+      - HEDERA_LEDGER_ID=testnet
+      
+      # API Configuration
+      - API_BASE_URL=https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net
+      
+      # Redis Configuration
+      - REDIS_CONNECTION_STRING=${REDIS_CONNECTION_STRING}
+      - REDIS_INDEX_KEY=spotindex:BTC_USD
+      - REDIS_POLL_INTERVAL_MS=50
+      
+      # Market Making Parameters
+      - BASE_SPREAD_BPS=10
+      - LEVEL_SPACING_BPS=5
+      - INITIAL_MARGIN_FACTOR=0.1
+      - BALANCE_UTILIZATION=0.8
+      
+      # Risk Limits
+      - MAX_POSITION_SIZE=1000
+      - MAX_NOTIONAL_EXPOSURE=100000
+      - MIN_ACCOUNT_BALANCE=1000
+      
+      # Execution
+      - RATE_LIMIT_DELAY_SECONDS=0.1
+      
+      # Logging
+      - ASPNETCORE_ENVIRONMENT=Production
+      - Logging__LogLevel__Default=Information
+      - Logging__LogLevel__MarketMakerWorkerService=Debug
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    networks:
+      - marketmaker-network
+
+networks:
+  marketmaker-network:
+    driver: bridge
+

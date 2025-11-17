@@ -1,0 +1,45 @@
+# Add these lines to your .gitignore file
+# to ensure secrets are never committed
+
+# Environment variables with secrets
+.env
+.env.local
+.env.*.local
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]in/
+[Oo]bj/
+
+# Rider
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Secrets and keys (extra safety)
+**/appsettings.*.local.json
+**/*secret*.json
+**/*private*.json
+**/keys/
+**/*.pem
+**/*.key
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
