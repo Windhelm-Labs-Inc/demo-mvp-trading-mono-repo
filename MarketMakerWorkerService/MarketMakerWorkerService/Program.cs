@@ -2,6 +2,8 @@ using DotNetEnv;
 using MarketMakerWorkerService;
 using MarketMakerWorkerService.Configuration;
 using MarketMakerWorkerService.Services;
+using Serilog;
+using Serilog.Formatting.Compact;
 
 // Load environment variables from .env file in development
 if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development" ||
@@ -17,12 +19,7 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Configure logging
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
-builder.Logging.AddDebug();
-
-// Load configuration with environment variable expansion
+// Load configuration with environment variable expansion (needed before Serilog)
 builder.Configuration
     .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
     .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true)
@@ -30,6 +27,30 @@ builder.Configuration
 
 // Manually expand environment variable placeholders in configuration
 ExpandEnvironmentVariables(builder.Configuration);
+
+// Configure Serilog for structured logging
+var loggerConfig = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
+    .Enrich.FromLogContext()
+    .Enrich.WithMachineName()
+    .Enrich.WithEnvironmentName()
+    .Enrich.WithThreadId()
+    .Enrich.WithProperty("Application", "MarketMakerWorkerService");
+
+// Use JSON formatting in production, human-readable in development
+if (builder.Environment.IsProduction())
+{
+    loggerConfig.WriteTo.Console(new CompactJsonFormatter());
+}
+else
+{
+    loggerConfig.WriteTo.Console(
+        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
+}
+
+Log.Logger = loggerConfig.CreateLogger();
+
+builder.Services.AddSerilog();
 
 // Bind MarketMakerConfiguration from appsettings
 builder.Services.Configure<MarketMakerConfiguration>(
@@ -98,7 +119,21 @@ if (string.IsNullOrEmpty(config.RedisConnectionString))
     return;
 }
 
-host.Run();
+try
+{
+    logger.LogInformation("Starting Market Maker Worker Service");
+    host.Run();
+    logger.LogInformation("Market Maker Worker Service stopped cleanly");
+}
+catch (Exception ex)
+{
+    logger.LogCritical(ex, "Application terminated unexpectedly");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
+}
 
 // Helper method to expand ${VAR} placeholders in configuration
 static void ExpandEnvironmentVariables(IConfiguration configuration)
@@ -116,11 +151,31 @@ static void ExpandSection(IConfigurationSection section)
         var value = section.Value;
         if (value.StartsWith("${") && value.EndsWith("}"))
         {
-            var envVarName = value.Substring(2, value.Length - 3);
+            var placeholder = value.Substring(2, value.Length - 3);
+            
+            // Support ${VAR:default} syntax
+            string envVarName;
+            string? defaultValue = null;
+            
+            var colonIndex = placeholder.IndexOf(':');
+            if (colonIndex > 0)
+            {
+                envVarName = placeholder.Substring(0, colonIndex);
+                defaultValue = placeholder.Substring(colonIndex + 1);
+            }
+            else
+            {
+                envVarName = placeholder;
+            }
+            
             var envValue = Environment.GetEnvironmentVariable(envVarName);
             if (!string.IsNullOrEmpty(envValue))
             {
                 section.Value = envValue;
+            }
+            else if (defaultValue != null)
+            {
+                section.Value = defaultValue;
             }
         }
     }

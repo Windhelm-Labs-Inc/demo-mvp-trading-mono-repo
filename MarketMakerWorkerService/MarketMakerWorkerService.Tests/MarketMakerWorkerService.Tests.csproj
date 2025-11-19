@@ -47,4 +47,8 @@
     <ProjectReference Include="..\MarketMakerWorkerService\MarketMakerWorkerService.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="discovery\ob\" />
+  </ItemGroup>
+
 </Project>

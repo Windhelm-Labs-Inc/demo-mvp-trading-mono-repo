@@ -11,12 +11,15 @@ services:
       # Hedera Configuration
       - HEDERA_ACCOUNT_ID=${HEDERA_ACCOUNT_ID}
       - HEDERA_PRIVATE_KEY_DER_HEX=${HEDERA_PRIVATE_KEY_DER_HEX}
-      - HEDERA_LEDGER_ID=testnet
+      - HEDERA_LEDGER_ID=${HEDERA_LEDGER_ID:-testnet}
       
       # API Configuration
       - API_BASE_URL=https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net
+      - TOKEN_REFRESH_INTERVAL_SECONDS=800
       
       # Redis Configuration
+      # IMPORTANT: REDIS_CONNECTION_STRING must include password parameter
+      # Format: host:port,ssl=True,abortConnect=False,password=YOUR_REDIS_KEY
       - REDIS_CONNECTION_STRING=${REDIS_CONNECTION_STRING}
       - REDIS_INDEX_KEY=spotindex:BTC_USD
       - REDIS_POLL_INTERVAL_MS=50

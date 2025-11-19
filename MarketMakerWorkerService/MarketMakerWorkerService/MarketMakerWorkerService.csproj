@@ -14,6 +14,12 @@
         <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.6" />
         <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.6" />
         <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.6" />
+        <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+        <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
+        <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
+        <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+        <PackageReference Include="Serilog.Settings.Configuration" Version="8.0.4" />
+        <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
         <PackageReference Include="StackExchange.Redis" Version="2.9.32" />
         <PackageReference Include="System.Reactive" Version="6.1.0" />
     </ItemGroup>
@@ -22,7 +28,8 @@
       <Content Include="..\.dockerignore">
         <Link>.dockerignore</Link>
       </Content>
-      <None Include="..\.env">
+      <!-- Only copy .env file if it exists (local development only, not in Docker) -->
+      <None Include="..\.env" Condition="Exists('..\.env')">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <Link>.env</Link>
       </None>

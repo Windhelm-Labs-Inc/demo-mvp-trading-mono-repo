@@ -37,6 +37,13 @@ public class MarketMakerConfiguration
     /// </summary>
     public string KeyType { get; set; } = "ed25519";
     
+    /// <summary>
+    /// Interval in seconds to refresh authentication token proactively (default 800 seconds = ~13.3 minutes)
+    /// Token expires after 15 minutes (900 seconds), so we refresh before expiry
+    /// Set to 0 to disable background refresh
+    /// </summary>
+    public int TokenRefreshIntervalSeconds { get; set; } = 800;
+    
     // ===========================
     // Market Configuration
     // ===========================
@@ -56,22 +63,22 @@ public class MarketMakerConfiguration
     /// <summary>
     /// Number of levels on each side (bids and asks)
     /// </summary>
-    public int NumberOfLevels { get; set; } = 10;
+    public int NumberOfLevels { get; set; } = 4;
     
     /// <summary>
     /// Quantity for level 0 (nearest to spread) in contracts
     /// </summary>
-    public decimal Level0Quantity { get; set; } = 100m;
+    public decimal Level0Quantity { get; set; } = 1000;
     
     /// <summary>
     /// Quantity for levels 1-2 in contracts
     /// </summary>
-    public decimal Levels1To2Quantity { get; set; } = 50m;
+    public decimal Levels1To2Quantity { get; set; } = 100;
     
     /// <summary>
     /// Quantity for levels 3-9 in contracts
     /// </summary>
-    public decimal Levels3To9Quantity { get; set; } = 10m;
+    public decimal Levels3To9Quantity { get; set; } = 10;
     
     // ===========================
     // Spread Configuration
@@ -80,7 +87,7 @@ public class MarketMakerConfiguration
     /// Base spread in basis points (98 bps = ~$1 USD at $102k BTC)
     /// DEPRECATED: Use BaseSpreadUsd for fixed dollar spread
     /// </summary>
-    public int BaseSpreadBps { get; set; } = 98;
+    public int BaseSpreadBps { get; set; } = 10;
     
     /// <summary>
     /// Spacing between levels in basis points (10 bps = ~$0.10 USD at $102k BTC)
@@ -92,7 +99,7 @@ public class MarketMakerConfiguration
     /// Base spread in USD (fixed dollar amount)
     /// Example: 1.00 = $1.00 spread between best bid and best ask
     /// </summary>
-    public decimal BaseSpreadUsd { get; set; } = 1.00m;
+    public decimal BaseSpreadUsd { get; set; } = 100.00m;
     
     /// <summary>
     /// Spacing between levels in USD (fixed dollar amount)
@@ -136,7 +143,7 @@ public class MarketMakerConfiguration
     /// 
     /// The value is scaled by 10^6 when sent to API (e.g., 0.2 → 200,000 base units)
     /// </summary>
-    public decimal InitialMarginFactor { get; set; } = 1.2m;
+    public decimal InitialMarginFactor { get; set; } = 0.2m;
     
     /// <summary>
     /// Maintenance margin factor (1.0 = 100%)
@@ -149,7 +156,7 @@ public class MarketMakerConfiguration
     /// <summary>
     /// Delay between API calls to avoid rate limiting (10 seconds as observed in Python scripts)
     /// </summary>
-    public int RateLimitDelaySeconds { get; set; } = 10;
+    // public int RateLimitDelaySeconds { get; set; } = 10;
     
     // ===========================
     // Risk Management Configuration (Stage 4)

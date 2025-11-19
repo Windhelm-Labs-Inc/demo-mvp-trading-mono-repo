@@ -13,20 +13,24 @@ public class Worker : BackgroundService
     private readonly RedisIndexWatcher _redisWatcher;
     private readonly BasicMarketMakerStrategy _strategy;
     private readonly IMarketDataService _marketDataService;
+    private readonly IAuthenticationService _authService;
     private readonly MarketMakerConfiguration _config;
     private readonly ILogger<Worker> _logger;
     private IDisposable? _priceSubscription;
+    private Task? _tokenRefreshTask;
 
     public Worker(
         RedisIndexWatcher redisWatcher,
         BasicMarketMakerStrategy strategy,
         IMarketDataService marketDataService,
+        IAuthenticationService authService,
         IOptions<MarketMakerConfiguration> config,
         ILogger<Worker> logger)
     {
         _redisWatcher = redisWatcher;
         _strategy = strategy;
         _marketDataService = marketDataService;
+        _authService = authService;
         _config = config.Value;
         _logger = logger;
     }
@@ -34,9 +38,9 @@ public class Worker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
-        _logger.LogInformation("🚀 Market Maker Worker Service Starting");
+        _logger.LogInformation("Market Maker Worker Service Starting");
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
-        _logger.LogInformation("📊 Configuration:");
+        _logger.LogInformation("Configuration:");
         _logger.LogInformation("   Account: {AccountId}", _config.AccountId);
         _logger.LogInformation("   Trading Pair: BTC/USD");
         _logger.LogInformation("   Base Spread: {Spread} bps", _config.BaseSpreadBps);
@@ -49,22 +53,22 @@ public class Worker : BackgroundService
         try
         {
             // Startup validation
-            _logger.LogInformation("🔍 Performing startup validation...");
+            _logger.LogInformation("Performing startup validation...");
             
             // Fetch and validate market info
             var marketInfo = await _marketDataService.GetMarketInfoAsync(stoppingToken);
-            _logger.LogInformation("✓ Market Info: Chain={ChainId}, Pair={Pair}, Decimals={Trading}/{Settlement}",
+            _logger.LogInformation("Market Info: Chain={ChainId}, Pair={Pair}, Decimals={Trading}/{Settlement}",
                 marketInfo.ChainId, marketInfo.TradingPair, 
                 marketInfo.TradingDecimals, marketInfo.SettlementDecimals);
 
             // Initialize strategy
-            _logger.LogInformation("🎯 Initializing market making strategy...");
+            _logger.LogInformation("Initializing market making strategy...");
             _strategy.Initialize();
-            _logger.LogInformation("✓ Strategy initialized successfully");
+            _logger.LogInformation("Strategy initialized successfully");
 
             // Start price monitoring
-            _logger.LogInformation("📡 Starting Redis price monitoring (READ-ONLY)...");
-            _logger.LogWarning("🚨 REDIS READ-ONLY MODE: Connected to production index server");
+            _logger.LogInformation("Starting Redis price monitoring (READ-ONLY)...");
+            _logger.LogWarning("REDIS READ-ONLY MODE: Connected to production index server");
             
             var priceObservable = _redisWatcher.CreatePriceObservable(
                 _config.RedisIndexKey,
@@ -95,8 +99,20 @@ public class Worker : BackgroundService
                 });
 
             _logger.LogInformation("═══════════════════════════════════════════════════════════");
-            _logger.LogInformation("✅ Market Maker is now RUNNING");
+            _logger.LogInformation("Market Maker is now RUNNING");
             _logger.LogInformation("═══════════════════════════════════════════════════════════");
+
+            // Start background token refresh if configured
+            if (_config.TokenRefreshIntervalSeconds > 0)
+            {
+                _logger.LogInformation("Starting background token refresh (interval: {Interval} seconds)", 
+                    _config.TokenRefreshIntervalSeconds);
+                _tokenRefreshTask = RunTokenRefreshLoopAsync(stoppingToken);
+            }
+            else
+            {
+                _logger.LogWarning("Background token refresh is DISABLED (TokenRefreshIntervalSeconds = 0)");
+            }
 
             // Wait for cancellation
             await Task.Delay(Timeout.Infinite, stoppingToken);
@@ -115,22 +131,22 @@ public class Worker : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
-        _logger.LogInformation("🛑 Market Maker Worker Service Stopping");
+        _logger.LogInformation("Market Maker Worker Service Stopping");
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
 
         try
         {
             // Dispose price subscription
             _priceSubscription?.Dispose();
-            _logger.LogInformation("✓ Price monitoring stopped");
+            _logger.LogInformation("Price monitoring stopped");
 
             // Emergency stop strategy (cancel all orders)
-            _logger.LogInformation("🚨 Cancelling all active orders...");
+            _logger.LogInformation("Cancelling all active orders...");
             await _strategy.EmergencyStopAsync(cancellationToken);
-            _logger.LogInformation("✓ All orders cancelled");
+            _logger.LogInformation("All orders cancelled");
 
             _logger.LogInformation("═══════════════════════════════════════════════════════════");
-            _logger.LogInformation("✅ Market Maker stopped cleanly");
+            _logger.LogInformation("Market Maker stopped cleanly");
             _logger.LogInformation("═══════════════════════════════════════════════════════════");
         }
         catch (Exception ex)
@@ -139,5 +155,50 @@ public class Worker : BackgroundService
         }
 
         await base.StopAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Background task that refreshes the authentication token periodically
+    /// Runs independently without blocking the main execution loop
+    /// </summary>
+    private async Task RunTokenRefreshLoopAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            // Wait for the configured interval before first refresh
+            await Task.Delay(TimeSpan.FromSeconds(_config.TokenRefreshIntervalSeconds), stoppingToken);
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    _logger.LogInformation("Background token refresh triggered");
+                    var token = await _authService.AuthenticateAsync(stoppingToken);
+                    _logger.LogInformation("Token refreshed successfully (length: {Length} chars)", token.Length);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Service is stopping, exit gracefully
+                    _logger.LogInformation("Token refresh loop cancelled");
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to refresh authentication token - will retry at next interval");
+                }
+
+                // Wait for next refresh interval
+                await Task.Delay(TimeSpan.FromSeconds(_config.TokenRefreshIntervalSeconds), stoppingToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Service is stopping, exit gracefully
+            _logger.LogInformation("Token refresh loop stopped");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fatal error in token refresh loop");
+        }
     }
 }

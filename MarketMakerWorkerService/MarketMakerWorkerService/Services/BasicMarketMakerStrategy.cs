@@ -54,10 +54,24 @@ public class BasicMarketMakerStrategy
         var numLevels = _config.NumberOfLevels; // Use configured number of levels
         
         _logger.LogInformation("Initializing BasicMarketMakerStrategy");
-        _logger.LogInformation("Configuration: Spread=${SpreadUsd:F2}, LevelSpacing=${LevelSpacingUsd:F2}, NumLevels={NumLevels}",
-            _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels);
-        _logger.LogInformation("Liquidity Shape: Level0={L0}, Levels1-2={L12}, Levels3-9={L39}, Total={Total} per side",
-            _liquidityShape.Level0Size, _liquidityShape.Level1_2Size, _liquidityShape.Level3_9Size, _liquidityShape.TotalSize);
+        _logger.LogInformation("═══════════════════════════════════════════════════════════");
+        _logger.LogInformation("CONFIGURATION VALUES:");
+        _logger.LogInformation("  Spread: ${SpreadUsd:F2} USD (legacy: {SpreadBps} bps)",
+            _config.BaseSpreadUsd, _config.BaseSpreadBps);
+        _logger.LogInformation("  Level Spacing: ${LevelSpacingUsd:F2} USD (legacy: {LevelSpacingBps} bps)",
+            _config.LevelSpacingUsd, _config.LevelSpacingBps);
+        _logger.LogInformation("  Number of Levels: {NumLevels} per side", numLevels);
+        _logger.LogInformation("  Initial Margin Factor: {MarginFactor} ({Pct:F0}% = {Leverage:F1}x leverage)",
+            _config.InitialMarginFactor, _config.InitialMarginFactor * 100, 1.0m / _config.InitialMarginFactor);
+        _logger.LogInformation("  Trading Decimals: {TradingDecimals}", _config.TradingDecimals);
+        _logger.LogInformation("  Settlement Decimals: {SettlementDecimals}", _config.SettlementDecimals);
+        _logger.LogInformation("  Redis Poll Interval: {PollIntervalMs}ms", _config.RedisPollIntervalMs);
+        _logger.LogInformation("LIQUIDITY SHAPE:");
+        _logger.LogInformation("  Level 0: {L0} contracts", _liquidityShape.Level0Size);
+        _logger.LogInformation("  Levels 1-2: {L12} contracts each", _liquidityShape.Level1_2Size);
+        _logger.LogInformation("  Levels 3-9: {L39} contracts each", _liquidityShape.Level3_9Size);
+        _logger.LogInformation("  Total per side: {Total} contracts", _liquidityShape.TotalSize);
+        _logger.LogInformation("═══════════════════════════════════════════════════════════");
         
         _stateManager.InitializeLadder(numLevels);
         _isInitialized = true;
@@ -214,14 +228,25 @@ public class BasicMarketMakerStrategy
             {
                 try
                 {
-                    _logger.LogDebug("Submitting {Side} order at level {Level}: Price={Price}, Qty={Quantity}",
-                        replacement.Side, replacement.LevelIndex, replacement.NewPrice, replacement.NewQuantity);
+                    var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
+                    var priceDecimal = PriceCalculator.FromBaseUnits(replacement.NewPrice, _config.TradingDecimals);
+                    var qtyDecimal = PriceCalculator.FromBaseUnits(replacement.NewQuantity, _config.TradingDecimals);
+                    var marginRequired = PriceCalculator.CalculateMargin(
+                        replacement.NewPrice,
+                        replacement.NewQuantity,
+                        marginFactorBase,
+                        _config.TradingDecimals,
+                        _config.SettlementDecimals);
+                    var marginDecimal = PriceCalculator.FromBaseUnits(marginRequired, _config.SettlementDecimals);
+                    
+                    _logger.LogDebug("Submitting {Side} order at level {Level}: Price=${Price:F2}, Qty={Quantity:F8}, Margin=${Margin:F2}",
+                        replacement.Side, replacement.LevelIndex, priceDecimal, qtyDecimal, marginDecimal);
                     
                     var response = await _orderService.SubmitLimitOrderAsync(
                         side: replacement.Side,
                         price: replacement.NewPrice,
                         quantity: replacement.NewQuantity,
-                        marginFactor: (ulong)(_config.InitialMarginFactor * 1_000_000),
+                        marginFactor: marginFactorBase,
                         clientOrderId: $"MM-{replacement.Side}-L{replacement.LevelIndex}-{DateTime.UtcNow.Ticks}",
                         jwtToken: jwtToken,
                         cancellationToken: cancellationToken);
@@ -294,20 +319,40 @@ public class BasicMarketMakerStrategy
             var askPrices = PriceCalculator.CalculateAskLevelsUsd(
                 midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
             
+            // Calculate quantities and required margin
+            var quantities = LiquidityShapeCalculator.CalculateQuantities(_liquidityShape, _config.TradingDecimals, numLevels);
+            var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
+            var totalMargin = PriceCalculator.CalculateTotalCapitalRequired(
+                bidPrices,
+                askPrices,
+                quantities,
+                marginFactorBase,
+                _config.TradingDecimals,
+                _config.SettlementDecimals);
+            
+            var maxUsableBalance = (ulong)(snapshot.Balance * _config.BalanceUtilization);
+            var balanceDecimal = PriceCalculator.FromBaseUnits(snapshot.Balance, _config.SettlementDecimals);
+            var usableDecimal = PriceCalculator.FromBaseUnits(maxUsableBalance, _config.SettlementDecimals);
+            var requiredDecimal = PriceCalculator.FromBaseUnits(totalMargin, _config.SettlementDecimals);
+            
+            _logger.LogInformation(
+                "Capital Check: Balance=${Balance:F2} (usable: ${Usable:F2} @ {Utilization:P0}), Required=${Required:F2}",
+                balanceDecimal, usableDecimal, _config.BalanceUtilization, requiredDecimal);
+            
             var hasSufficient = LiquidityShapeCalculator.HasSufficientCapital(
                 _liquidityShape,
                 bidPrices,
                 askPrices,
                 snapshot.Balance,
-                (ulong)(_config.InitialMarginFactor * 1_000_000), // Convert decimal to base units
+                marginFactorBase,
                 _config.TradingDecimals,
                 _config.SettlementDecimals,
                 _config.BalanceUtilization);
             
             if (!hasSufficient)
             {
-                _logger.LogWarning("Insufficient capital: Balance={Balance}, Required for full ladder",
-                    snapshot.Balance);
+                _logger.LogWarning("INSUFFICIENT CAPITAL: Need ${Required:F2} but only have ${Usable:F2} available",
+                    requiredDecimal, usableDecimal);
             }
             
             return hasSufficient;

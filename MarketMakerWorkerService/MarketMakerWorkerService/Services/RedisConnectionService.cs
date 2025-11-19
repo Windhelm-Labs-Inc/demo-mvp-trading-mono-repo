@@ -31,6 +31,15 @@ public class RedisConnectionService : IRedisConnectionService, IDisposable
                 "Redis connection string not configured. Ensure REDIS_CONNECTION_STRING environment variable is set.");
         }
         
+        // Validate that password is included for Azure Redis
+        if (!connectionString.Contains("password=", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogError("Redis connection string is missing password parameter. Azure Redis requires authentication.");
+            _logger.LogError("Expected format: host:port,ssl=True,abortConnect=False,password=YOUR_KEY");
+            throw new InvalidOperationException(
+                "Redis connection string must include 'password=' parameter for Azure Redis authentication.");
+        }
+        
         _logger.LogInformation("Connecting to Redis: {ConnectionString}", 
             MaskConnectionString(connectionString));
         
@@ -51,7 +60,7 @@ public class RedisConnectionService : IRedisConnectionService, IDisposable
     {
         try
         {
-            // 🚨 READ-ONLY: Test connection by reading the production index key
+            // READ-ONLY: Test connection by reading the production index key
             // We NEVER write to Redis, even for connection tests
             var db = _connection.GetDatabase();
             var indexKey = "spotindex:BTC_USD"; // Production index key
