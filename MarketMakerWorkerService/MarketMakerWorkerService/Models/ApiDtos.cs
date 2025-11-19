@@ -57,7 +57,10 @@ public enum OrderStatus
     Cancelled,
     
     [JsonPropertyName("expired")]
-    Expired
+    Expired,
+    
+    [JsonPropertyName("closed")]
+    Closed
 }
 
 // ===========================
@@ -68,8 +71,9 @@ public enum OrderStatus
 /// Request to get authentication challenge
 /// </summary>
 public record AuthChallengeRequest(
-    [property: JsonPropertyName("owner_id")] string OwnerId,
-    [property: JsonPropertyName("owner_type")] string OwnerType = "hapi"); // MUST be lowercase "hapi"
+    [property: JsonPropertyName("account_id")] string AccountId,
+    [property: JsonPropertyName("ledger_id")] string LedgerId,
+    [property: JsonPropertyName("method")] string Method = "message");
 
 /// <summary>
 /// Response from authentication challenge
@@ -84,7 +88,10 @@ public record AuthChallengeResponse(
 /// </summary>
 public record AuthVerifyRequest(
     [property: JsonPropertyName("challenge_id")] string ChallengeId,
-    [property: JsonPropertyName("signature_map")] string SignatureMap); // Base64-encoded protobuf SignatureMap
+    [property: JsonPropertyName("account_id")] string AccountId,
+    [property: JsonPropertyName("message_signed_plain_text")] string MessageSignedPlainText,
+    [property: JsonPropertyName("signature_map_base64")] string SignatureMapBase64,
+    [property: JsonPropertyName("sig_type")] string SigType = "ed25519");
 
 /// <summary>
 /// Response from authentication verification
@@ -104,7 +111,7 @@ public record MarketInfoResponse(
     [property: JsonPropertyName("chain_id")] uint ChainId,
     [property: JsonPropertyName("ledger_id")] string LedgerId,
     [property: JsonPropertyName("trading_pair")] string TradingPair,
-    [property: JsonPropertyName("settlement_token")] EntityId SettlementToken,
+    [property: JsonPropertyName("settlement_token")] string SettlementToken, // API returns string like "0.0.6891795"
     [property: JsonPropertyName("trading_decimals")] uint TradingDecimals,
     [property: JsonPropertyName("settlement_decimals")] uint SettlementDecimals);
 
@@ -122,15 +129,24 @@ public record SpreadResponse(
 // ===========================
 
 /// <summary>
+/// Account identifier for order requests
+/// </summary>
+public record OrderAccountInfo(
+    [property: JsonPropertyName("account_id")] string AccountId,
+    [property: JsonPropertyName("owner_type")] string OwnerType); // "hapi" (lowercase)
+
+/// <summary>
 /// Submit limit order request
 /// </summary>
 public record SubmitLimitOrderRequest(
-    [property: JsonPropertyName("owner_id")] string OwnerId,
-    [property: JsonPropertyName("owner_type")] string OwnerType, // "hapi" (lowercase)
-    [property: JsonPropertyName("side")] string Side, // "long" or "short" (lowercase)
+    [property: JsonPropertyName("client_order_id")] string ClientOrderId,
+    [property: JsonPropertyName("kind")] string Kind, // "limit"
+    [property: JsonPropertyName("margin")] ulong Margin, // Margin is a FACTOR (e.g., 1.2x = 1_200_000)
+    [property: JsonPropertyName("account")] OrderAccountInfo Account,
     [property: JsonPropertyName("price")] ulong Price,
     [property: JsonPropertyName("quantity")] ulong Quantity,
-    [property: JsonPropertyName("margin")] ulong Margin); // Margin is a FACTOR (e.g., 1.2x = 1_200_000)
+    [property: JsonPropertyName("side")] string Side, // "long" or "short" (lowercase)
+    [property: JsonPropertyName("time_in_force")] string TimeInForce); // "gtc" (good-til-cancelled)
 
 /// <summary>
 /// Submit limit order response
@@ -143,15 +159,8 @@ public record SubmitOrderResponse(
     [property: JsonPropertyName("position_ids")] Guid[] PositionIds);
 
 /// <summary>
-/// Cancel order request
-/// </summary>
-public record CancelOrderRequest(
-    [property: JsonPropertyName("owner_id")] string OwnerId,
-    [property: JsonPropertyName("owner_type")] string OwnerType, // "hapi" (lowercase)
-    [property: JsonPropertyName("order_id")] Guid OrderId);
-
-/// <summary>
 /// Cancel order response
+/// Note: Cancel uses query parameter, not request body
 /// </summary>
 public record CancelOrderResponse(
     [property: JsonPropertyName("order_id")] Guid OrderId,
@@ -196,7 +205,7 @@ public record AccountResponse(
 /// </summary>
 public record OrderInfo(
     [property: JsonPropertyName("order_id")] Guid OrderId,
-    [property: JsonPropertyName("side")] string Side,
+    [property: JsonPropertyName("contract_side")] string Side, // API uses "contract_side" not "side"
     [property: JsonPropertyName("price")] ulong Price,
     [property: JsonPropertyName("quantity")] ulong Quantity,
     [property: JsonPropertyName("filled_quantity")] ulong FilledQuantity,
@@ -204,10 +213,11 @@ public record OrderInfo(
 
 /// <summary>
 /// Position information in account response
+/// Note: API has typo "postion_id" (missing 'i')
 /// </summary>
 public record PositionInfo(
-    [property: JsonPropertyName("position_id")] Guid PositionId,
-    [property: JsonPropertyName("side")] string Side,
+    [property: JsonPropertyName("postion_id")] Guid PositionId, // API has typo: "postion_id" not "position_id"
+    [property: JsonPropertyName("contract_side")] string Side, // API uses "contract_side" not "side"
     [property: JsonPropertyName("quantity")] ulong Quantity,
     [property: JsonPropertyName("entry_price")] ulong EntryPrice);
 

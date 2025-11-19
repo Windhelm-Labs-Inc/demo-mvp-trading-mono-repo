@@ -93,7 +93,7 @@ public static class TestConfiguration
     {
         return Options.Create(new MarketMakerConfiguration
         {
-            ApiBaseUrl = apiBaseUrl ?? "https://test-api.example.com",
+            ApiBaseUrl = apiBaseUrl ?? "https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net",
             AccountId = accountId ?? TestAccount.AccountId,
             PrivateKeyDerHex = TestAccount.PrivateKeyDerHex,
             LedgerId = TestAccount.LedgerId,

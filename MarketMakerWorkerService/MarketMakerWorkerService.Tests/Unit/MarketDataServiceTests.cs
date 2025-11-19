@@ -21,7 +21,7 @@ public class MarketDataServiceTests
             ChainId: TestConfiguration.MarketInfo.ChainId,
             LedgerId: TestConfiguration.MarketInfo.LedgerId,
             TradingPair: TestConfiguration.MarketInfo.TradingPair,
-            SettlementToken: EntityId.FromString(TestConfiguration.MarketInfo.SettlementToken),
+            SettlementToken: TestConfiguration.MarketInfo.SettlementToken, // Now a string
             TradingDecimals: TestConfiguration.MarketInfo.TradingDecimals,
             SettlementDecimals: TestConfiguration.MarketInfo.SettlementDecimals
         );
@@ -116,7 +116,7 @@ public class MarketDataServiceTests
         
         var client = new HttpClient(mockHandler.Object)
         {
-            BaseAddress = new Uri("https://test-api.example.com")
+            BaseAddress = new Uri("https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net")
         };
         
         mockFactory.Setup(f => f.CreateClient("PerpetualsAPI")).Returns(client);

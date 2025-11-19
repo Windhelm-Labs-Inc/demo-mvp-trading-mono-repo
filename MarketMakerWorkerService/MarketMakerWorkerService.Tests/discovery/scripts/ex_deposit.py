@@ -16,9 +16,9 @@ API_BASE = "https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net"
 LEDGER_ID = "testnet"
 #ACCOUNT_ID = "0.0.6978377"
 #PRIVATE_KEY_DER_HEX = "302e020100300506032b6570042204205db3a68cb7831bcefb625238e7800cc9dc85aab09b2acf97537af0d9ef667d7b"
-ACCOUNT_ID = "0.0.6993643"
-PRIVATE_KEY_DER_HEX = "302e020100300506032b657004220420a0ea0985865c475c8c7dd48baa1bfa7780369ec7662b398235350e693dc9f426"
-RATE_LIMIT_DELAY = 10  # Wait 10 seconds between API calls
+ACCOUNT_ID = "0.0.6993636"
+PRIVATE_KEY_DER_HEX = "302e020100300506032b65700422042068dc0ee90deccf7437110283103e64d96f2f32d4e280a278682fdefc41b8d2e6"
+RATE_LIMIT_DELAY = 1  # Wait 10 seconds between API calls
 
 # Get market config
 def get_market_config():
@@ -40,7 +40,7 @@ print(f"Market Configuration:")
 print(f"  Settlement Token: {SETTLEMENT_TOKEN}")
 print(f"  Token Decimals: {TOKEN_DECIMALS}")
 
-DEPOSIT_TOKENS = 20
+DEPOSIT_TOKENS = 100000
 DEPOSIT_AMOUNT = DEPOSIT_TOKENS * (10 ** TOKEN_DECIMALS)
 
 print(f"  Depositing: {DEPOSIT_TOKENS} tokens = {DEPOSIT_AMOUNT} raw units")

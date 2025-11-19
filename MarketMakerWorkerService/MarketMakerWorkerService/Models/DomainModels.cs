@@ -145,9 +145,9 @@ public record AccountSnapshot
             
             foreach (var pos in Positions)
             {
-                if (pos.Side.ToLower() == "long")
+                if (pos.Side?.ToLower() == "long")
                     longQty += (long)pos.Quantity;
-                else if (pos.Side.ToLower() == "short")
+                else if (pos.Side?.ToLower() == "short")
                     shortQty += (long)pos.Quantity;
             }
             

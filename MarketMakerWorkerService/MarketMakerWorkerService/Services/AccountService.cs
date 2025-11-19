@@ -35,16 +35,35 @@ public class AccountService : IAccountService
     {
         _logger.LogDebug("Fetching balance for account: {AccountId}", _config.AccountId);
         
-        var request = new GetBalanceRequest(
-            OwnerId: _config.AccountId,
-            OwnerType: "hapi");
+        // API uses GET with query parameters, not POST with body
+        var endpoint = $"/api/v1/account/balance?accountId={_config.AccountId}&ownerType=Hapi";
         
-        var response = await SendRequestAsync<GetBalanceRequest, BalanceResponse>(
-            HttpMethod.Post,
-            "/api/v1/account/balance",
-            request,
-            jwtToken,
-            cancellationToken);
+        var client = _httpClientFactory.CreateClient("PerpetualsAPI");
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        requestMessage.Headers.Authorization = 
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwtToken);
+        
+        var httpResponse = await client.SendAsync(requestMessage, cancellationToken);
+        var responseContent = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+        
+        _logger.LogTrace("API Response from {Endpoint}: Status={StatusCode}, Body={Body}",
+            endpoint, (int)httpResponse.StatusCode, responseContent);
+        
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "API request failed: GET {Endpoint} returned {StatusCode}: {Response}",
+                endpoint, httpResponse.StatusCode, responseContent);
+            
+            throw new HttpRequestException(
+                $"API request failed: {httpResponse.StatusCode} - {responseContent}");
+        }
+        
+        var response = System.Text.Json.JsonSerializer.Deserialize<BalanceResponse>(responseContent, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+            PropertyNameCaseInsensitive = true
+        }) ?? throw new InvalidOperationException($"Failed to deserialize response from {endpoint}");
         
         _logger.LogInformation(
             "Balance fetched: {Balance} (settlement token base units)",
@@ -59,16 +78,35 @@ public class AccountService : IAccountService
     {
         _logger.LogDebug("Fetching account details: {AccountId}", _config.AccountId);
         
-        var request = new GetAccountRequest(
-            OwnerId: _config.AccountId,
-            OwnerType: "hapi");
+        // API uses GET with query parameters, not POST with body
+        var endpoint = $"/api/v1/account?accountId={_config.AccountId}&ownerType=Hapi";
         
-        var response = await SendRequestAsync<GetAccountRequest, AccountResponse>(
-            HttpMethod.Post,
-            "/api/v1/account",
-            request,
-            jwtToken,
-            cancellationToken);
+        var client = _httpClientFactory.CreateClient("PerpetualsAPI");
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        requestMessage.Headers.Authorization = 
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwtToken);
+        
+        var httpResponse = await client.SendAsync(requestMessage, cancellationToken);
+        var responseContent = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+        
+        _logger.LogTrace("API Response from {Endpoint}: Status={StatusCode}, Body={Body}",
+            endpoint, (int)httpResponse.StatusCode, responseContent);
+        
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "API request failed: GET {Endpoint} returned {StatusCode}: {Response}",
+                endpoint, httpResponse.StatusCode, responseContent);
+            
+            throw new HttpRequestException(
+                $"API request failed: {httpResponse.StatusCode} - {responseContent}");
+        }
+        
+        var response = System.Text.Json.JsonSerializer.Deserialize<AccountResponse>(responseContent, new System.Text.Json.JsonSerializerOptions
+        {
+            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower,
+            PropertyNameCaseInsensitive = true
+        }) ?? throw new InvalidOperationException($"Failed to deserialize response from {endpoint}");
         
         _logger.LogInformation(
             "Account fetched: Balance={Balance}, Orders={OrderCount}, Positions={PositionCount}",
@@ -91,9 +129,17 @@ public class AccountService : IAccountService
             Timestamp = DateTime.UtcNow
         };
         
+        // Log position details for debugging
+        _logger.LogDebug("Account has {PositionCount} positions", accountResponse.Positions.Length);
+        foreach (var pos in accountResponse.Positions)
+        {
+            _logger.LogDebug("Position: ID={PositionId}, Side={Side}, Qty={Quantity}, EntryPrice={EntryPrice}",
+                pos.PositionId, pos.Side ?? "(null)", pos.Quantity, pos.EntryPrice);
+        }
+        
         _logger.LogDebug(
-            "Account snapshot: Balance={Balance}, NetPosition={NetPosition}",
-            snapshot.Balance, snapshot.NetPosition);
+            "Account snapshot: Balance={Balance}, Positions={PositionCount}",
+            snapshot.Balance, snapshot.Positions.Length);
         
         return snapshot;
     }

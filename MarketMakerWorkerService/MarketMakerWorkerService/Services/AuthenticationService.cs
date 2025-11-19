@@ -71,7 +71,7 @@ public class AuthenticationService : IAuthenticationService
         var client = _httpClientFactory.CreateClient("PerpetualsAPI");
         
         // Step 1: Get authentication challenge
-        var challengeRequest = new AuthChallengeRequest(_config.AccountId, "hapi");
+        var challengeRequest = new AuthChallengeRequest(_config.AccountId, _config.LedgerId, "message");
         var challengeResponse = await SendRequestAsync<AuthChallengeRequest, AuthChallengeResponse>(
             client,
             "/api/v1/auth/challenge",
@@ -90,8 +90,11 @@ public class AuthenticationService : IAuthenticationService
         
         // Step 3: Verify signature and get token
         var verifyRequest = new AuthVerifyRequest(
-            challengeResponse.ChallengeId,
-            Convert.ToBase64String(signatureMap.ToByteArray()));
+            ChallengeId: challengeResponse.ChallengeId,
+            AccountId: _config.AccountId,
+            MessageSignedPlainText: challengeResponse.Message,
+            SignatureMapBase64: Convert.ToBase64String(signatureMap.ToByteArray()),
+            SigType: "ed25519");
         
         var verifyResponse = await SendRequestAsync<AuthVerifyRequest, AuthVerifyResponse>(
             client,
@@ -110,14 +113,17 @@ public class AuthenticationService : IAuthenticationService
     
     private byte[] BuildHip820Message(byte[] messageBytes)
     {
-        // HIP-820: Prepend magic bytes + length
+        // HIP-820: Prepend magic bytes + length + newline + message
+        // Format: "\x19Hedera Signed Message:\n" + length + "\n" + message
         var magic = Encoding.ASCII.GetBytes("\x19Hedera Signed Message:\n");
         var lengthBytes = Encoding.ASCII.GetBytes(messageBytes.Length.ToString());
+        var newline = new byte[] { (byte)'\n' };
         
-        var fullMessage = new byte[magic.Length + lengthBytes.Length + messageBytes.Length];
+        var fullMessage = new byte[magic.Length + lengthBytes.Length + 1 + messageBytes.Length];
         Buffer.BlockCopy(magic, 0, fullMessage, 0, magic.Length);
         Buffer.BlockCopy(lengthBytes, 0, fullMessage, magic.Length, lengthBytes.Length);
-        Buffer.BlockCopy(messageBytes, 0, fullMessage, magic.Length + lengthBytes.Length, messageBytes.Length);
+        fullMessage[magic.Length + lengthBytes.Length] = (byte)'\n';
+        Buffer.BlockCopy(messageBytes, 0, fullMessage, magic.Length + lengthBytes.Length + 1, messageBytes.Length);
         
         return fullMessage;
     }

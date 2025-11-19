@@ -94,7 +94,7 @@ public class AuthenticationServiceTests
         
         var client = new HttpClient(mockHandler.Object)
         {
-            BaseAddress = new Uri("https://test-api.example.com")
+            BaseAddress = new Uri("https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net")
         };
         
         mockFactory.Setup(f => f.CreateClient("PerpetualsAPI")).Returns(client);

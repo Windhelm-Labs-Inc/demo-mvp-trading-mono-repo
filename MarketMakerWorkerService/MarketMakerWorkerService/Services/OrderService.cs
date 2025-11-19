@@ -49,20 +49,29 @@ public class OrderService : IOrderService
         CancellationToken cancellationToken)
     {
         _logger.LogDebug(
-            "Submitting limit order: Side={Side}, Price={Price}, Qty={Quantity}, ClientOrderId={ClientOrderId}",
-            side, price, quantity, clientOrderId);
+            "Submitting limit order: Side={Side}, Price={Price}, Qty={Quantity}, Margin={Margin}, ClientOrderId={ClientOrderId}",
+            side, price, quantity, marginFactor, clientOrderId);
+        
+        // Log detailed request for debugging margin issues
+        _logger.LogInformation(
+            "ORDER SUBMIT REQUEST: Side={Side}, Price={Price} base units, Qty={Qty} base units, Margin={Margin} base units",
+            side == ContractSide.Long ? "long" : "short", price, quantity, marginFactor);
         
         var request = new SubmitLimitOrderRequest(
-            OwnerId: _config.AccountId,
-            OwnerType: "hapi", // Must be lowercase
-            Side: side == ContractSide.Long ? "long" : "short", // Must be lowercase
+            ClientOrderId: clientOrderId,
+            Kind: "limit",
+            Margin: marginFactor,
+            Account: new OrderAccountInfo(
+                AccountId: _config.AccountId,
+                OwnerType: "Hapi"), // Match AccountService casing
             Price: price,
             Quantity: quantity,
-            Margin: marginFactor);
+            Side: side == ContractSide.Long ? "long" : "short", // Must be lowercase
+            TimeInForce: "good_until_filled"); // API expects "good_until_filled" not "gtc"
         
         var response = await SendRequestAsync<SubmitLimitOrderRequest, SubmitOrderResponse>(
             HttpMethod.Post,
-            "/api/v1/orders/limit",
+            "/api/v1/order/submit",
             request,
             jwtToken,
             cancellationToken);
@@ -81,17 +90,32 @@ public class OrderService : IOrderService
     {
         _logger.LogDebug("Cancelling order: OrderId={OrderId}", orderId);
         
-        var request = new CancelOrderRequest(
-            OwnerId: _config.AccountId,
-            OwnerType: "hapi",
-            OrderId: orderId);
+        // Cancel endpoint uses query parameter, not request body
+        var endpoint = $"/api/v1/order/cancel?orderId={orderId}";
         
-        var response = await SendRequestAsync<CancelOrderRequest, CancelOrderResponse>(
-            HttpMethod.Post,
-            "/api/v1/orders/cancel",
-            request,
-            jwtToken,
-            cancellationToken);
+        var client = _httpClientFactory.CreateClient("PerpetualsAPI");
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        requestMessage.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwtToken);
+        
+        // Add idempotency key
+        requestMessage.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
+        
+        var httpResponse = await client.SendAsync(requestMessage, cancellationToken);
+        
+        if (!httpResponse.IsSuccessStatusCode)
+        {
+            var errorBody = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+            _logger.LogError(
+                "API request failed: POST {Endpoint} returned {StatusCode}: {ErrorBody}",
+                endpoint, httpResponse.StatusCode, errorBody);
+            throw new HttpRequestException(
+                $"API request failed: {httpResponse.StatusCode} - {errorBody}");
+        }
+        
+        var responseBody = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
+        var response = JsonSerializer.Deserialize<CancelOrderResponse>(responseBody)
+            ?? throw new InvalidOperationException("Failed to deserialize CancelOrderResponse");
         
         _logger.LogInformation(
             "Order cancelled: OrderId={OrderId}, UnfilledQty={UnfilledQuantity}",
@@ -125,6 +149,9 @@ public class OrderService : IOrderService
         
         requestMessage.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwtToken);
+        
+        // Add idempotency key for order operations
+        requestMessage.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
         
         var response = await client.SendAsync(requestMessage, cancellationToken);
         var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);

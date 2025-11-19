@@ -125,8 +125,16 @@ public class MarketMakerConfiguration
     // Margin Configuration
     // ===========================
     /// <summary>
-    /// Initial margin factor (1.2 = 120%)
-    /// This is a FACTOR, not an absolute amount
+    /// Initial margin factor for order submission
+    /// This is a FACTOR/FRACTION of notional value, not an absolute amount
+    /// 
+    /// Examples:
+    /// - 0.1 = 10% margin = 10x leverage (production minimum)
+    /// - 0.2 = 20% margin = 5x leverage (recommended for testing)
+    /// - 1.0 = 100% margin = 1x leverage (no leverage)
+    /// - 1.2 = 120% margin = 0.83x leverage (production default - very conservative)
+    /// 
+    /// The value is scaled by 10^6 when sent to API (e.g., 0.2 → 200,000 base units)
     /// </summary>
     public decimal InitialMarginFactor { get; set; } = 1.2m;
     

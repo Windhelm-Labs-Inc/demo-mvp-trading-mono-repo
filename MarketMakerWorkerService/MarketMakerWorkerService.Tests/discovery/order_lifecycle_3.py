@@ -26,12 +26,12 @@ API_BASE = "https://perps-api-d7cff5fhd9g0b7c4.eastus-01.azurewebsites.net"
 LEDGER_ID = "testnet"
 # ACCOUNT_ID = "0.0.6978377"
 # PRIVATE_KEY_DER_HEX = "302e020100300506032b6570042204205db3a68cb7831bcefb625238e7800cc9dc85aab09b2acf97537af0d9ef667d7b"
-ACCOUNT_ID = "0.0.6993641"
-PRIVATE_KEY_DER_HEX = "302e020100300506032b657004220420f3115fbca7003a9082c3b879e0711821392bea693134c83eee0fb3f7e694133a"
+ACCOUNT_ID = "0.0.6993636"
+PRIVATE_KEY_DER_HEX = "302e020100300506032b65700422042068dc0ee90deccf7437110283103e64d96f2f32d4e280a278682fdefc41b8d2e6"
 
 # Order Parameters (in human-readable units)
 ORDER_PRICE_USD = 97927.00        # Price per BTC contract in USD
-ORDER_SIDE = "long"               # "long" (buy) or "short" (sell) - lowercase string
+ORDER_SIDE = "short"               # "long" (buy) or "short" (sell) - lowercase string
 ORDER_KIND = "limit"              # "market" or "limit" - lowercase string
 ORDER_TIME_IN_FORCE = "good_until_filled"  # lowercase snake_case string
 

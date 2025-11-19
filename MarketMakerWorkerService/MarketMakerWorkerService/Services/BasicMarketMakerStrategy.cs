@@ -37,8 +37,13 @@ public class BasicMarketMakerStrategy
         _stateManager = stateManager;
         _logger = logger;
         
-        // Use default shaped liquidity (100/50/50/10×7)
-        _liquidityShape = LiquidityShapeCalculator.DefaultShape;
+        // Use configured liquidity shape
+        _liquidityShape = new LiquidityShape
+        {
+            Level0Size = _config.Level0Quantity,
+            Level1_2Size = _config.Levels1To2Quantity,
+            Level3_9Size = _config.Levels3To9Quantity
+        };
     }
 
     /// <summary>
@@ -46,7 +51,7 @@ public class BasicMarketMakerStrategy
     /// </summary>
     public void Initialize()
     {
-        const int numLevels = 10; // Fixed at 10 levels per side
+        var numLevels = _config.NumberOfLevels; // Use configured number of levels
         
         _logger.LogInformation("Initializing BasicMarketMakerStrategy");
         _logger.LogInformation("Configuration: Spread=${SpreadUsd:F2}, LevelSpacing=${LevelSpacingUsd:F2}, NumLevels={NumLevels}",
@@ -81,7 +86,7 @@ public class BasicMarketMakerStrategy
             var token = await _authService.GetValidTokenAsync(cancellationToken);
             
             // Calculate new price levels using FIXED USD spread and spacing
-            const int numLevels = 10;
+            var numLevels = _config.NumberOfLevels; // Use configured number of levels
             var midPriceBase = PriceCalculator.ToBaseUnits(indexPrice, _config.TradingDecimals);
             var bidPrices = PriceCalculator.CalculateBidLevelsUsd(
                 midPriceBase,
@@ -134,88 +139,140 @@ public class BasicMarketMakerStrategy
 
     /// <summary>
     /// Execute order replacements: cancel old orders, submit new ones
-    /// Uses minimal change strategy - only replaces what's necessary
+    /// Uses parallel execution for maximum performance (no rate limits on API)
     /// </summary>
     private async Task ExecuteReplacementsAsync(
         List<OrderReplacement> replacements,
         string jwtToken,
         CancellationToken cancellationToken)
     {
-        var cancelTasks = new List<Task>();
-        var successfulCancels = new List<OrderReplacement>();
+        // Step 1: Cancel old orders in parallel (if they exist)
+        var cancelsToProcess = replacements.Where(r => r.OldOrderId.HasValue).ToList();
         
-        // Step 1: Cancel old orders (if they exist)
-        foreach (var replacement in replacements.Where(r => r.OldOrderId.HasValue))
+        if (cancelsToProcess.Any())
         {
-            try
+            _logger.LogInformation("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
+            
+            var cancelTasks = cancelsToProcess.Select(async replacement =>
             {
-                _logger.LogDebug("Cancelling {Side} order at level {Level}: {OrderId}",
-                    replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
-                
-                // Safe to use .Value because of the HasValue filter above
-                var orderIdToCancel = replacement.OldOrderId!.Value;
-                await _orderService.CancelOrderAsync(
-                    orderIdToCancel,
-                    jwtToken,
-                    cancellationToken);
-                
-                // Clear the level in state manager
-                _stateManager.ClearLevel(replacement.Side, replacement.LevelIndex);
-                successfulCancels.Add(replacement);
-                
-                // Rate limiting delay between cancels
-                if (_config.RateLimitDelaySeconds > 0)
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(_config.RateLimitDelaySeconds), cancellationToken);
+                    _logger.LogDebug("Cancelling {Side} order at level {Level}: {OrderId}",
+                        replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
+                    
+                    var orderIdToCancel = replacement.OldOrderId!.Value;
+                    await _orderService.CancelOrderAsync(
+                        orderIdToCancel,
+                        jwtToken,
+                        cancellationToken);
+                    
+                    // Clear the level in state manager (thread-safe)
+                    _stateManager.ClearLevel(replacement.Side, replacement.LevelIndex);
+                    
+                    _logger.LogInformation("✓ Cancelled {Side} order at level {Level}: {OrderId}",
+                        replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
+                    
+                    return (Success: true, Replacement: replacement);
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to cancel order {OrderId} at level {Level}",
-                    replacement.OldOrderId, replacement.LevelIndex);
-                // Continue with other cancellations
-            }
+                catch (HttpRequestException httpEx)
+                {
+                    _logger.LogError(httpEx, "✗ HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
+                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement);
+                }
+                catch (TaskCanceledException)
+                {
+                    _logger.LogWarning("✗ Timeout cancelling {Side} order {OrderId} at level {Level} - request cancelled, continuing",
+                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "✗ Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
+                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement);
+                }
+            });
+            
+            var cancelResults = await Task.WhenAll(cancelTasks);
+            var successfulCancels = cancelResults.Count(r => r.Success);
+            var failedCancels = cancelResults.Count(r => !r.Success);
+            
+            _logger.LogInformation("Cancel batch complete: {Success} succeeded, {Failed} failed",
+                successfulCancels, failedCancels);
         }
         
-        // Step 2: Submit new orders
-        foreach (var replacement in replacements)
+        // Step 2: Submit new orders in parallel
+        if (replacements.Any())
         {
-            try
+            _logger.LogInformation("Submitting {Count} orders in parallel", replacements.Count);
+            
+            var submitTasks = replacements.Select(async replacement =>
             {
-                _logger.LogDebug("Submitting {Side} order at level {Level}: Price={Price}, Qty={Quantity}",
-                    replacement.Side, replacement.LevelIndex, replacement.NewPrice, replacement.NewQuantity);
-                
-                var response = await _orderService.SubmitLimitOrderAsync(
-                    side: replacement.Side,
-                    price: replacement.NewPrice,
-                    quantity: replacement.NewQuantity,
-                    marginFactor: (ulong)(_config.InitialMarginFactor * 1_000_000), // Convert decimal to base units
-                    clientOrderId: $"MM-{replacement.Side}-L{replacement.LevelIndex}-{DateTime.UtcNow.Ticks}",
-                    jwtToken: jwtToken,
-                    cancellationToken: cancellationToken);
-                
-                // Update state manager with new order
-                _stateManager.UpdateLevel(
-                    replacement.Side,
-                    replacement.LevelIndex,
-                    response.OrderId,
-                    replacement.NewPrice,
-                    replacement.NewQuantity);
-                
-                _logger.LogInformation("✓ Placed {Side} order at level {Level}: OrderId={OrderId}",
-                    replacement.Side, replacement.LevelIndex, response.OrderId);
-                
-                // Rate limiting delay between submits
-                if (_config.RateLimitDelaySeconds > 0)
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(_config.RateLimitDelaySeconds), cancellationToken);
+                    _logger.LogDebug("Submitting {Side} order at level {Level}: Price={Price}, Qty={Quantity}",
+                        replacement.Side, replacement.LevelIndex, replacement.NewPrice, replacement.NewQuantity);
+                    
+                    var response = await _orderService.SubmitLimitOrderAsync(
+                        side: replacement.Side,
+                        price: replacement.NewPrice,
+                        quantity: replacement.NewQuantity,
+                        marginFactor: (ulong)(_config.InitialMarginFactor * 1_000_000),
+                        clientOrderId: $"MM-{replacement.Side}-L{replacement.LevelIndex}-{DateTime.UtcNow.Ticks}",
+                        jwtToken: jwtToken,
+                        cancellationToken: cancellationToken);
+                    
+                    // Update state manager with new order (thread-safe)
+                    _stateManager.UpdateLevel(
+                        replacement.Side,
+                        replacement.LevelIndex,
+                        response.OrderId,
+                        replacement.NewPrice,
+                        replacement.NewQuantity);
+                    
+                    _logger.LogInformation("✓ Placed {Side} order at level {Level}: OrderId={OrderId}, Status={Status}",
+                        replacement.Side, replacement.LevelIndex, response.OrderId, response.OrderStatus);
+                    
+                    return (Success: true, Replacement: replacement, OrderId: response.OrderId);
                 }
-            }
-            catch (Exception ex)
+                catch (HttpRequestException httpEx)
+                {
+                    _logger.LogError(httpEx, "✗ HTTP error submitting {Side} order at level {Level} - API returned error, continuing",
+                        replacement.Side, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+                }
+                catch (TaskCanceledException)
+                {
+                    _logger.LogWarning("✗ Timeout submitting {Side} order at level {Level} - request cancelled, continuing",
+                        replacement.Side, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "✗ Unexpected error submitting {Side} order at level {Level}, continuing",
+                        replacement.Side, replacement.LevelIndex);
+                    
+                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+                }
+            });
+            
+            var submitResults = await Task.WhenAll(submitTasks);
+            var successfulSubmits = submitResults.Count(r => r.Success);
+            var failedSubmits = submitResults.Count(r => !r.Success);
+            
+            _logger.LogInformation("Submit batch complete: {Success} succeeded, {Failed} failed",
+                successfulSubmits, failedSubmits);
+            
+            if (failedSubmits > 0)
             {
-                _logger.LogError(ex, "Failed to submit order at {Side} level {Level}",
-                    replacement.Side, replacement.LevelIndex);
-                // Continue with other submissions
+                _logger.LogWarning("Market maker running with partial ladder: {ActiveOrders}/{TotalOrders} orders active",
+                    successfulSubmits, replacements.Count);
             }
         }
     }
@@ -232,10 +289,10 @@ public class BasicMarketMakerStrategy
             var snapshot = await _accountService.GetAccountSnapshotAsync(token, cancellationToken);
             
             var midPriceBase = PriceCalculator.ToBaseUnits(indexPrice, _config.TradingDecimals);
-            var bidPrices = PriceCalculator.CalculateBidLevels(
-                midPriceBase, _config.BaseSpreadBps, _config.LevelSpacingBps, numLevels);
-            var askPrices = PriceCalculator.CalculateAskLevels(
-                midPriceBase, _config.BaseSpreadBps, _config.LevelSpacingBps, numLevels);
+            var bidPrices = PriceCalculator.CalculateBidLevelsUsd(
+                midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
+            var askPrices = PriceCalculator.CalculateAskLevelsUsd(
+                midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
             
             var hasSufficient = LiquidityShapeCalculator.HasSufficientCapital(
                 _liquidityShape,
