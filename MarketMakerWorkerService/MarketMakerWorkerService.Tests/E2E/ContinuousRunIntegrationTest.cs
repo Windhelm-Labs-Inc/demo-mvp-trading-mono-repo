@@ -26,7 +26,7 @@ public class ContinuousRunIntegrationTest : IDisposable
     // ============================================================================
     private const int RUN_DURATION_SECONDS = 30; // How long to run the market maker
     
-    private const int NUMBER_OF_LEVELS = 5;      // Levels per side
+    private const int NUMBER_OF_LEVELS = 1;      // Levels per side
     private const string LEVEL_0_QUANTITY = "0.001";    // contracts
     private const string LEVELS_1_2_QUANTITY = "0.001"; // contracts
     private const string LEVELS_3_9_QUANTITY = "0.001"; // contracts

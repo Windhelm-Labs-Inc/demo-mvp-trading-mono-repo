@@ -90,11 +90,11 @@ public class OrderService : IOrderService
     {
         _logger.LogDebug("Cancelling order: OrderId={OrderId}", orderId);
         
-        // Cancel endpoint uses query parameter, not request body
+        // Cancel endpoint uses query parameter with DELETE method
         var endpoint = $"/api/v1/order/cancel?orderId={orderId}";
         
         var client = _httpClientFactory.CreateClient("PerpetualsAPI");
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Delete, endpoint);
         requestMessage.Headers.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", jwtToken);
         
@@ -107,7 +107,7 @@ public class OrderService : IOrderService
         {
             var errorBody = await httpResponse.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
-                "API request failed: POST {Endpoint} returned {StatusCode}: {ErrorBody}",
+                "API request failed: DELETE {Endpoint} returned {StatusCode}: {ErrorBody}",
                 endpoint, httpResponse.StatusCode, errorBody);
             throw new HttpRequestException(
                 $"API request failed: {httpResponse.StatusCode} - {errorBody}");

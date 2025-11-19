@@ -648,7 +648,7 @@ public class MarketMakerBehaviorDemo : IDisposable
             .RespondWith(Response.Create().WithStatusCode(200).WithHeader("Content-Type", "application/json")
                 .WithBody($"{{\"order_id\":\"{Guid.NewGuid()}\",\"order_status\":\"open\",\"quantity_filled\":0,\"trade_id\":null,\"position_ids\":[]}}"));
         
-        _mockServer.Given(Request.Create().WithPath("/api/v1/orders/cancel").UsingPost())
+        _mockServer.Given(Request.Create().WithPath("/api/v1/orders/cancel").UsingDelete())
             .RespondWith(Response.Create().WithStatusCode(200).WithHeader("Content-Type", "application/json")
                 .WithBody($"{{\"order_id\":\"{Guid.NewGuid()}\",\"unfilled_quantity\":0}}"));
     }
