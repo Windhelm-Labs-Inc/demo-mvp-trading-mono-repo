@@ -41,8 +41,8 @@ public class RedisIndexWatcher
             var db = _redisConnection.Connection.GetDatabase();
             string? lastValue = null;
 
-            _logger.LogInformation("Starting Redis price watcher for key: {Key} (poll interval: {Interval}ms)", 
-                indexKey, pollIntervalMs);
+            _logger.LogInformation("Starting Redis price watcher for key: {Key})", 
+                indexKey);
             
 
             try

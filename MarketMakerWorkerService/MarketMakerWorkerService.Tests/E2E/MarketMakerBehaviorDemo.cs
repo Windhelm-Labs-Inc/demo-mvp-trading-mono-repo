@@ -48,7 +48,6 @@ public class MarketMakerBehaviorDemo : IDisposable
                 ["MarketMaker:BaseSpreadUsd"] = "1.00",  // FIXED $1.00 USD spread
                 ["MarketMaker:LevelSpacingUsd"] = "0.10", // FIXED $0.10 USD spacing between levels
                 ["MarketMaker:InitialMarginFactor"] = "0.1",
-                ["MarketMaker:RateLimitDelaySeconds"] = "0",  // No delays - APIs are mocked!
                 ["MarketMaker:BalanceUtilization"] = "0.8",
                 ["MarketMaker:TradingDecimals"] = TestConfiguration.MarketInfo.TradingDecimals.ToString(),
                 ["MarketMaker:SettlementDecimals"] = TestConfiguration.MarketInfo.SettlementDecimals.ToString(),
@@ -608,7 +607,6 @@ public class MarketMakerBehaviorDemo : IDisposable
                     _stateManager.ClearLevel(r.Side, r.LevelIndex);
                 }
                 catch { }
-                await Task.Delay(_config.RateLimitDelaySeconds * 1000, cancellationToken);
             }
 
             // Place new orders
@@ -622,7 +620,6 @@ public class MarketMakerBehaviorDemo : IDisposable
                     _stateManager.UpdateLevel(r.Side, r.LevelIndex, response.OrderId, r.NewPrice, r.NewQuantity);
                 }
                 catch { }
-                await Task.Delay(_config.RateLimitDelaySeconds * 1000, cancellationToken);
             }
         }
     }

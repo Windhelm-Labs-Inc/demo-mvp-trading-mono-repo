@@ -43,8 +43,7 @@ public class Worker : BackgroundService
         _logger.LogInformation("Configuration:");
         _logger.LogInformation("   Account: {AccountId}", _config.AccountId);
         _logger.LogInformation("   Trading Pair: BTC/USD");
-        _logger.LogInformation("   Base Spread: {Spread} bps", _config.BaseSpreadBps);
-        _logger.LogInformation("   Level Spacing: {Spacing} bps", _config.LevelSpacingBps);
+        
         _logger.LogInformation("   Margin Factor: {Margin:P2}", _config.InitialMarginFactor);
         _logger.LogInformation("   Redis Index Key: {Key}", _config.RedisIndexKey);
         _logger.LogInformation("   Poll Interval: {Interval}ms", _config.RedisPollIntervalMs);

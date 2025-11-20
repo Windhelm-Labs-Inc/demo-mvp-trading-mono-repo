@@ -53,7 +53,7 @@ public class OrderService : IOrderService
             side, price, quantity, marginFactor, clientOrderId);
         
         // Log detailed request for debugging margin issues
-        _logger.LogInformation(
+        _logger.LogDebug(
             "ORDER SUBMIT REQUEST: Side={Side}, Price={Price} base units, Qty={Qty} base units, Margin={Margin} base units",
             side == ContractSide.Long ? "long" : "short", price, quantity, marginFactor);
         
@@ -76,7 +76,7 @@ public class OrderService : IOrderService
             jwtToken,
             cancellationToken);
         
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Order submitted: OrderId={OrderId}, Status={Status}, Filled={Filled}",
             response.OrderId, response.OrderStatus, response.QuantityFilled);
         
@@ -117,7 +117,7 @@ public class OrderService : IOrderService
         var response = JsonSerializer.Deserialize<CancelOrderResponse>(responseBody)
             ?? throw new InvalidOperationException("Failed to deserialize CancelOrderResponse");
         
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Order cancelled: OrderId={OrderId}, UnfilledQty={UnfilledQuantity}",
             response.OrderId, response.UnfilledQuantity);
         

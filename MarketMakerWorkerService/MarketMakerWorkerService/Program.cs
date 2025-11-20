@@ -29,26 +29,14 @@ builder.Configuration
 ExpandEnvironmentVariables(builder.Configuration);
 
 // Configure Serilog for structured logging
-var loggerConfig = new LoggerConfiguration()
+Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .Enrich.WithMachineName()
     .Enrich.WithEnvironmentName()
     .Enrich.WithThreadId()
-    .Enrich.WithProperty("Application", "MarketMakerWorkerService");
-
-// Use JSON formatting in production, human-readable in development
-if (builder.Environment.IsProduction())
-{
-    loggerConfig.WriteTo.Console(new CompactJsonFormatter());
-}
-else
-{
-    loggerConfig.WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{SourceContext}] {Message:lj}{NewLine}{Exception}");
-}
-
-Log.Logger = loggerConfig.CreateLogger();
+    .Enrich.WithProperty("Application", "MarketMakerWorkerService")
+    .CreateLogger();
 
 builder.Services.AddSerilog();
 
@@ -80,8 +68,6 @@ builder.Services.AddSingleton<IAccountService, AccountService>();
 builder.Services.AddSingleton<RedisIndexWatcher>();
 builder.Services.AddSingleton<BasicMarketMakerStrategy>();
 
-// Register Stage 4 services
-builder.Services.AddSingleton<RiskManager>();
 
 // Register the worker service
 builder.Services.AddHostedService<Worker>();

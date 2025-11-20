@@ -165,7 +165,7 @@ public class BasicMarketMakerStrategy
         
         if (cancelsToProcess.Any())
         {
-            _logger.LogInformation("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
+            _logger.LogDebug("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
             
             var cancelTasks = cancelsToProcess.Select(async replacement =>
             {
@@ -183,28 +183,28 @@ public class BasicMarketMakerStrategy
                     // Clear the level in state manager (thread-safe)
                     _stateManager.ClearLevel(replacement.Side, replacement.LevelIndex);
                     
-                    _logger.LogInformation("✓ Cancelled {Side} order at level {Level}: {OrderId}",
+                    _logger.LogDebug("Cancelled {Side} order at level {Level}: {OrderId}",
                         replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
                     
                     return (Success: true, Replacement: replacement);
                 }
                 catch (HttpRequestException httpEx)
                 {
-                    _logger.LogError(httpEx, "✗ HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
+                    _logger.LogError(httpEx, "HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
                         replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement);
                 }
                 catch (TaskCanceledException)
                 {
-                    _logger.LogWarning("✗ Timeout cancelling {Side} order {OrderId} at level {Level} - request cancelled, continuing",
+                    _logger.LogWarning("Timeout cancelling {Side} order {OrderId} at level {Level} - request cancelled, continuing",
                         replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "✗ Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
+                    _logger.LogError(ex, "Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
                         replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement);
@@ -215,14 +215,14 @@ public class BasicMarketMakerStrategy
             var successfulCancels = cancelResults.Count(r => r.Success);
             var failedCancels = cancelResults.Count(r => !r.Success);
             
-            _logger.LogInformation("Cancel batch complete: {Success} succeeded, {Failed} failed",
+            _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
                 successfulCancels, failedCancels);
         }
         
         // Step 2: Submit new orders in parallel
         if (replacements.Any())
         {
-            _logger.LogInformation("Submitting {Count} orders in parallel", replacements.Count);
+            _logger.LogDebug("Submitting {Count} orders in parallel", replacements.Count);
             
             var submitTasks = replacements.Select(async replacement =>
             {
@@ -259,14 +259,14 @@ public class BasicMarketMakerStrategy
                         replacement.NewPrice,
                         replacement.NewQuantity);
                     
-                    _logger.LogInformation("✓ Placed {Side} order at level {Level}: OrderId={OrderId}, Status={Status}",
+                    _logger.LogDebug("Placed {Side} order at level {Level}: OrderId={OrderId}, Status={Status}",
                         replacement.Side, replacement.LevelIndex, response.OrderId, response.OrderStatus);
                     
                     return (Success: true, Replacement: replacement, OrderId: response.OrderId);
                 }
                 catch (HttpRequestException httpEx)
                 {
-                    _logger.LogError(httpEx, "✗ HTTP error submitting {Side} order at level {Level} - API returned error, continuing",
+                    _logger.LogError(httpEx, "HTTP error submitting {Side} order at level {Level} - API returned error, continuing",
                         replacement.Side, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
@@ -291,7 +291,7 @@ public class BasicMarketMakerStrategy
             var successfulSubmits = submitResults.Count(r => r.Success);
             var failedSubmits = submitResults.Count(r => !r.Success);
             
-            _logger.LogInformation("Submit batch complete: {Success} succeeded, {Failed} failed",
+            _logger.LogDebug("Submit batch complete: {Success} succeeded, {Failed} failed",
                 successfulSubmits, failedSubmits);
             
             if (failedSubmits > 0)
@@ -301,68 +301,68 @@ public class BasicMarketMakerStrategy
             }
         }
     }
-
-    /// <summary>
-    /// Check account balance and ensure sufficient capital
-    /// </summary>
-    public async Task<bool> HasSufficientCapitalAsync(decimal indexPrice, CancellationToken cancellationToken)
-    {
-        try
-        {
-            const int numLevels = 10;
-            var token = await _authService.GetValidTokenAsync(cancellationToken);
-            var snapshot = await _accountService.GetAccountSnapshotAsync(token, cancellationToken);
-            
-            var midPriceBase = PriceCalculator.ToBaseUnits(indexPrice, _config.TradingDecimals);
-            var bidPrices = PriceCalculator.CalculateBidLevelsUsd(
-                midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
-            var askPrices = PriceCalculator.CalculateAskLevelsUsd(
-                midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
-            
-            // Calculate quantities and required margin
-            var quantities = LiquidityShapeCalculator.CalculateQuantities(_liquidityShape, _config.TradingDecimals, numLevels);
-            var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
-            var totalMargin = PriceCalculator.CalculateTotalCapitalRequired(
-                bidPrices,
-                askPrices,
-                quantities,
-                marginFactorBase,
-                _config.TradingDecimals,
-                _config.SettlementDecimals);
-            
-            var maxUsableBalance = (ulong)(snapshot.Balance * _config.BalanceUtilization);
-            var balanceDecimal = PriceCalculator.FromBaseUnits(snapshot.Balance, _config.SettlementDecimals);
-            var usableDecimal = PriceCalculator.FromBaseUnits(maxUsableBalance, _config.SettlementDecimals);
-            var requiredDecimal = PriceCalculator.FromBaseUnits(totalMargin, _config.SettlementDecimals);
-            
-            _logger.LogInformation(
-                "Capital Check: Balance=${Balance:F2} (usable: ${Usable:F2} @ {Utilization:P0}), Required=${Required:F2}",
-                balanceDecimal, usableDecimal, _config.BalanceUtilization, requiredDecimal);
-            
-            var hasSufficient = LiquidityShapeCalculator.HasSufficientCapital(
-                _liquidityShape,
-                bidPrices,
-                askPrices,
-                snapshot.Balance,
-                marginFactorBase,
-                _config.TradingDecimals,
-                _config.SettlementDecimals,
-                _config.BalanceUtilization);
-            
-            if (!hasSufficient)
-            {
-                _logger.LogWarning("INSUFFICIENT CAPITAL: Need ${Required:F2} but only have ${Usable:F2} available",
-                    requiredDecimal, usableDecimal);
-            }
-            
-            return hasSufficient;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error checking capital sufficiency");
-            return false;
-        }
-    }
+    //
+    // /// <summary>
+    // /// Check account balance and ensure sufficient capital
+    // /// </summary>
+    // public async Task<bool> HasSufficientCapitalAsync(decimal indexPrice, CancellationToken cancellationToken)
+    // {
+    //     try
+    //     {
+    //         var numLevels = _config.NumberOfLevels;
+    //         var token = await _authService.GetValidTokenAsync(cancellationToken);
+    //         var snapshot = await _accountService.GetAccountSnapshotAsync(token, cancellationToken);
+    //         
+    //         var midPriceBase = PriceCalculator.ToBaseUnits(indexPrice, _config.TradingDecimals);
+    //         var bidPrices = PriceCalculator.CalculateBidLevelsUsd(
+    //             midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
+    //         var askPrices = PriceCalculator.CalculateAskLevelsUsd(
+    //             midPriceBase, _config.BaseSpreadUsd, _config.LevelSpacingUsd, numLevels, _config.TradingDecimals);
+    //         
+    //         // Calculate quantities and required margin
+    //         var quantities = LiquidityShapeCalculator.CalculateQuantities(_liquidityShape, _config.TradingDecimals, numLevels);
+    //         var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
+    //         var totalMargin = PriceCalculator.CalculateTotalCapitalRequired(
+    //             bidPrices,
+    //             askPrices,
+    //             quantities,
+    //             marginFactorBase,
+    //             _config.TradingDecimals,
+    //             _config.SettlementDecimals);
+    //         
+    //         var maxUsableBalance = (ulong)(snapshot.Balance * _config.BalanceUtilization);
+    //         var balanceDecimal = PriceCalculator.FromBaseUnits(snapshot.Balance, _config.SettlementDecimals);
+    //         var usableDecimal = PriceCalculator.FromBaseUnits(maxUsableBalance, _config.SettlementDecimals);
+    //         var requiredDecimal = PriceCalculator.FromBaseUnits(totalMargin, _config.SettlementDecimals);
+    //         
+    //         _logger.LogInformation(
+    //             "Capital Check: Balance=${Balance:F2} (usable: ${Usable:F2} @ {Utilization:P0}), Required=${Required:F2}",
+    //             balanceDecimal, usableDecimal, _config.BalanceUtilization, requiredDecimal);
+    //         
+    //         var hasSufficient = LiquidityShapeCalculator.HasSufficientCapital(
+    //             _liquidityShape,
+    //             bidPrices,
+    //             askPrices,
+    //             snapshot.Balance,
+    //             marginFactorBase,
+    //             _config.TradingDecimals,
+    //             _config.SettlementDecimals,
+    //             _config.BalanceUtilization);
+    //         
+    //         if (!hasSufficient)
+    //         {
+    //             _logger.LogWarning("INSUFFICIENT CAPITAL: Need ${Required:F2} but only have ${Usable:F2} available",
+    //                 requiredDecimal, usableDecimal);
+    //         }
+    //         
+    //         return hasSufficient;
+    //     }
+    //     catch (Exception ex)
+    //     {
+    //         _logger.LogError(ex, "Error checking capital sufficiency");
+    //         return false;
+    //     }
+    // }
 
     /// <summary>
     /// Emergency stop - cancel all orders
