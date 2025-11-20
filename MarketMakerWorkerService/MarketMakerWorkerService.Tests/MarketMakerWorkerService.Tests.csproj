@@ -37,18 +37,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>appsettings.json</Link>
     </None>
-    <None Include="..\MarketMakerWorkerService\appsettings.Development.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>appsettings.Development.json</Link>
-    </None>
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\MarketMakerWorkerService\MarketMakerWorkerService.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="discovery\ob\" />
   </ItemGroup>
 
 </Project>

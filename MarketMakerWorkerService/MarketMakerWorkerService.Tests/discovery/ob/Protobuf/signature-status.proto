@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+enum SignatureStatus {
+    Failed = 0;
+    Satisfied = 1;
+    Partial = 2;
+}

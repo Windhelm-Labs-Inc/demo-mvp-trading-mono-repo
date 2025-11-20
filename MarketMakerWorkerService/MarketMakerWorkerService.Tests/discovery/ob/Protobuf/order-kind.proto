@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+enum OrderKind {
+    Market = 0;
+    Limit = 1;
+}

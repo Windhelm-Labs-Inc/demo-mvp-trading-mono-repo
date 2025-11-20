@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+enum OrderStatus {
+    Pending = 0;
+    Open = 1;
+    Closed = 2;
+}

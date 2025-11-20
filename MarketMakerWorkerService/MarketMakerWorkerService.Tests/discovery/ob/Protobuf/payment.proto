@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+message Payment {
+    oneof kind {
+        bytes signed_transaction_bytes = 1;
+        bytes rlp_encoded_bytes = 2;
+    }
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "price-level.proto";
+
+message DepthChart {
+  repeated PriceLevel bids = 1;
+  repeated PriceLevel asks = 2;
+  uint64 version = 3;
+}

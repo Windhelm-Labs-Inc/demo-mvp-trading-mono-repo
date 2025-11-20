@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "order-slip.proto";
+
+message Spread {
+  int32 bid_count = 1;
+  int32 ask_count = 2;
+  OrderSlip best_bid  = 3;
+  OrderSlip best_ask  = 4;
+  uint64 version   = 5;
+}

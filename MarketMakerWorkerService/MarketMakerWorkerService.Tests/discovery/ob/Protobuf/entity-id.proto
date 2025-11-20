@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+message EntityId {
+    int64 shard = 1;
+    int64 realm = 2;
+    int64 num = 3;
+}

@@ -81,20 +81,8 @@ public class MarketMakerConfiguration
     public decimal Levels3To9Quantity { get; set; } = 10;
     
     // ===========================
-    // Spread Configuration
+    // Spread Configuration (Fixed Dollar Amount Strategy)
     // ===========================
-    /// <summary>
-    /// Base spread in basis points (98 bps = ~$1 USD at $102k BTC)
-    /// DEPRECATED: Use BaseSpreadUsd for fixed dollar spread
-    /// </summary>
-    public int BaseSpreadBps { get; set; } = 10;
-    
-    /// <summary>
-    /// Spacing between levels in basis points (10 bps = ~$0.10 USD at $102k BTC)
-    /// DEPRECATED: Use LevelSpacingUsd for fixed dollar spacing
-    /// </summary>
-    public int LevelSpacingBps { get; set; } = 10;
-    
     /// <summary>
     /// Base spread in USD (fixed dollar amount)
     /// Example: 1.00 = $1.00 spread between best bid and best ask
@@ -146,78 +134,8 @@ public class MarketMakerConfiguration
     public decimal InitialMarginFactor { get; set; } = 0.2m;
     
     /// <summary>
-    /// Maintenance margin factor (1.0 = 100%)
-    /// </summary>
-    public decimal MaintenanceMarginFactor { get; set; } = 1.0m;
-    
-    // ===========================
-    // API Rate Limiting
-    // ===========================
-    /// <summary>
-    /// Delay between API calls to avoid rate limiting (10 seconds as observed in Python scripts)
-    /// </summary>
-    // public int RateLimitDelaySeconds { get; set; } = 10;
-    
-    // ===========================
-    // Risk Management Configuration (Stage 4)
-    // ===========================
-    /// <summary>
-    /// Maximum position size in contracts (absolute value)
-    /// </summary>
-    public decimal MaxPositionSize { get; set; } = 1000m;
-    
-    /// <summary>
-    /// Maximum notional exposure in USD
-    /// </summary>
-    public decimal MaxNotionalExposure { get; set; } = 100_000m;
-    
-    /// <summary>
-    /// Minimum account balance in settlement token base units (1000 USDC = 1,000,000,000)
-    /// </summary>
-    public decimal MinAccountBalance { get; set; } = 1000m;
-    
-    /// <summary>
     /// Capital utilization ratio (0.80 = use 80% of available capital)
     /// </summary>
     public decimal BalanceUtilization { get; set; } = 0.80m;
-    
-    // ===========================
-    // Inventory Management Configuration (Stage 4)
-    // ===========================
-    /// <summary>
-    /// Target position for market neutral strategy (0 = neutral)
-    /// </summary>
-    public decimal TargetPosition { get; set; } = 0m;
-    
-    /// <summary>
-    /// Skew factor for inventory management (0.5 = moderate adjustment)
-    /// </summary>
-    public decimal SkewFactor { get; set; } = 0.5m;
-    
-    /// <summary>
-    /// Maximum inventory skew in basis points (50 bps)
-    /// </summary>
-    public int MaxSkewBps { get; set; } = 50;
-    
-    // ===========================
-    // Volatility Monitoring Configuration (Stage 4)
-    // ===========================
-    /// <summary>
-    /// Enable volatility-based spread adjustments
-    /// </summary>
-    public bool EnableVolatilityAdjustment { get; set; } = true;
-    
-    /// <summary>
-    /// Number of price samples to track for volatility calculation
-    /// </summary>
-    public int VolatilityHistorySize { get; set; } = 100;
-    
-    // ===========================
-    // Execution Configuration (Stage 4)
-    // ===========================
-    /// <summary>
-    /// Maximum concurrent order cancellations (for batch cancels)
-    /// </summary>
-    public int MaxConcurrentCancels { get; set; } = 10;
 }
 

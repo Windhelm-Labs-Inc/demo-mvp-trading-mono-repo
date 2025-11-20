@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+message PriceLevel {
+  uint64 price = 1;
+  uint64 order_count = 2;
+  uint64 total_quantity = 3;
+}

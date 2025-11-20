@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "owner.proto";
+import "contract-side.proto";
+import "order-kind.proto";
+import "order-status.proto";
+import "order-time-in-force.proto";
+import "spread.proto";
+import "depth-chart.proto";
+
+
+service OrderManager {
+    rpc SubmitOrder (SubmitOrderRequest) returns (SubmitOrderResponse);
+    rpc CancelOrder (CancelOrderRequest) returns (CancelOrderResponse);
+    rpc GetSpread (SpreadRequest) returns (SpreadResponse);
+    rpc GetDepthChart (DepthChartRequest) returns (DepthChartResponse);
+}
+message SubmitOrderRequest {
+    Owner owner = 1;
+    ContractSide side = 2;
+    OrderKind kind = 3;
+    uint64 quantity = 4;
+    uint64 price = 5;
+    uint64 margin = 6;
+    OrderTimeInForce time_in_force = 7;
+    string client_order_id = 8;
+}
+message SubmitOrderResponse {
+    bytes order_id = 1;
+    uint64 quantity_filled = 2;
+    OrderStatus order_status = 3;
+    bytes trade_id = 4;
+    repeated bytes position_ids = 5;
+}
+message CancelOrderRequest {
+    bytes order_id = 1;
+}
+message CancelOrderResponse {
+    bytes order_id = 1;
+    uint64 unfilled_quantity = 2;
+}
+message SpreadRequest { } 
+message SpreadResponse { 
+	Spread spread = 1; 
+}
+message DepthChartRequest {
+  uint32 bid_count = 1;
+  uint32 ask_count = 2;
+}
+message DepthChartResponse {
+  DepthChart depth_chart = 1;
+}

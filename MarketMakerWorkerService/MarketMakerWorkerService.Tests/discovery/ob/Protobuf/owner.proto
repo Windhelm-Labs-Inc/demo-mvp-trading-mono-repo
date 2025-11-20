@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "entity-id.proto";
+
+message Owner {
+	oneof id {
+		EntityId hapi = 1;
+		bytes evm = 2;
+		bytes guid = 3;
+	}
+}

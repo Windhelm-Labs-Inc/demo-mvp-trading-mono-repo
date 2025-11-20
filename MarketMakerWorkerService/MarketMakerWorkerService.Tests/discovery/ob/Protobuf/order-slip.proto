@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "contract-side.proto";
+
+message OrderSlip {
+  bytes order_id = 1;
+  ContractSide side = 2;
+  uint64 price = 3;
+  uint64 quantity = 4;
+}

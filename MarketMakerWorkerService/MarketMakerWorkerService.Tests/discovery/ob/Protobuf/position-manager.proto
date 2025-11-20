@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "owner.proto";
+import "settlement-quantity.proto";
+
+service PositionManager {
+    rpc SettlePositions (SettlePositionsRequest) returns (SettlePositionsResponse);
+    rpc PortPositions (PortPositionsRequest) returns (PortPositionsResponse);
+}
+message SettlePositionsRequest {
+    repeated SettlementQuantity settlements = 1;
+}
+message SettlePositionsResponse {
+    bytes settlement_id = 1;
+}
+message PortPositionsRequest {
+    Owner liquidator = 1;
+    repeated bytes position_ids = 2;
+}
+message PortPositionsResponse {
+}

@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "owner.proto";
+import "payment.proto";
+import "signature-map.proto";
+import "signature-status.proto";
+import "margin-account.proto";
+
+service AccountManager {
+    rpc VerifySignature (VerifySignatureRequest) returns (VerifySignatureResponse);
+    rpc GetAccount (AccountRequest) returns (AccountResponse);
+    rpc GetBalance (BalanceRequest) returns (BalanceResponse);
+    rpc CreateDepositTransaction (CreateDepositTransactionRequest) returns (CreateDepositTransactionReponse);
+    rpc Deposit (DepositRequest) returns (DepositResponse);
+    rpc Withdraw (WithdrawRequest) returns (WithdrawResponse);
+}
+message VerifySignatureRequest {
+    Owner owner = 1;
+    bytes challenge = 2;
+    SignatureMap signature_map = 3;
+}
+message VerifySignatureResponse {
+    SignatureStatus signature_status = 1;
+}
+message AccountRequest {
+    Owner owner = 1;
+}
+message AccountResponse {
+    MarginAccount account = 2;
+}
+message BalanceRequest {
+    Owner owner = 1;
+}
+message BalanceResponse {
+    bytes owner_id = 1;
+    uint64 balance = 2;
+}
+message CreateDepositTransactionRequest {
+    Owner owner = 1;
+    uint64 amount = 2;
+}
+message CreateDepositTransactionReponse {
+    bytes owner_id = 1;
+    Payment payment = 2;
+}
+message DepositRequest {
+    Owner owner = 1;
+    Payment payment = 2;
+}
+message DepositResponse {
+    bytes owner_id = 1;
+    uint64 balance = 2;
+    string transaction_id = 3;
+}
+message WithdrawRequest {
+    Owner owner = 1;
+    uint64 amount = 2;
+}
+message WithdrawResponse {
+    bytes owner_id = 1;
+    uint64 amount = 2;
+    uint64 balance = 3;
+    string transaction_id = 4;
+}

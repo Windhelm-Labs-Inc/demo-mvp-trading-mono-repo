@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "entity-id.proto";
+import "market-index.proto";
+
+service MarketInfo {
+    rpc GetMarketInfo (GetMarketInfoRequest) returns (GetMarketInfoResponse);
+    rpc GetIndexPrice (GetIndexPriceRequest) returns (GetIndexPriceResponse);
+    rpc UpdateIndexPrice (UpdateIndexPriceRequest) returns (UpdateIndexPriceResponse);
+}
+message GetMarketInfoRequest {
+}
+message GetMarketInfoResponse {
+    uint32 chain_id = 1;
+    EntityId settlement_token = 2;
+    uint32 settlement_decimals = 3;
+    uint32 trading_decimals = 4;
+    string trading_pair = 5;
+    string ledger_id = 6;
+    EntityId market_treasury = 7;
+}
+message GetIndexPriceRequest {
+}
+message GetIndexPriceResponse {
+    MarketIndex market_index = 1;
+}
+message UpdateIndexPriceRequest {
+    uint64 index_price = 1;
+}
+message UpdateIndexPriceResponse {
+    MarketIndex market_index = 1;
+}

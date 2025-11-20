@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+enum ContractSide {
+    Long = 0;
+    Short = 1;
+}

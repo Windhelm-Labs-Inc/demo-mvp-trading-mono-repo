@@ -6,16 +6,14 @@ using Serilog;
 using Serilog.Formatting.Compact;
 
 // Load environment variables from .env file in development
-if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development" ||
-    Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") == "Development")
+
+var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+if (File.Exists(envPath))
 {
-    var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
-    if (File.Exists(envPath))
-    {
-        Env.Load(envPath);
-        Console.WriteLine($"Loaded environment variables from: {envPath}");
-    }
+    Env.Load(envPath);
+    Console.WriteLine($"Loaded environment variables from: {envPath}");
 }
+
 
 var builder = Host.CreateApplicationBuilder(args);
 

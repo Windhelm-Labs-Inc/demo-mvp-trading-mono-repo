@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "google/protobuf/timestamp.proto";
+import "contract-side.proto";
+
+message MarketIndex {
+  uint64 funding_index = 1;
+  uint64 index_price   = 2;
+  uint64 mark_price    = 3;
+  uint64 funding_rate  = 4;
+  ContractSide paying_side = 5;
+  google.protobuf.Timestamp computed_at = 6;
+}

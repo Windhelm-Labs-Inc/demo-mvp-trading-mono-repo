@@ -43,8 +43,12 @@ public class Worker : BackgroundService
         _logger.LogInformation("Configuration:");
         _logger.LogInformation("   Account: {AccountId}", _config.AccountId);
         _logger.LogInformation("   Trading Pair: BTC/USD");
-        
-        _logger.LogInformation("   Margin Factor: {Margin:P2}", _config.InitialMarginFactor);
+        _logger.LogInformation("   Strategy: Fixed Dollar Amount");
+        _logger.LogInformation("   Base Spread: ${SpreadUsd:F2} USD", _config.BaseSpreadUsd);
+        _logger.LogInformation("   Level Spacing: ${SpacingUsd:F2} USD", _config.LevelSpacingUsd);
+        _logger.LogInformation("   Number of Levels: {Levels} per side", _config.NumberOfLevels);
+        _logger.LogInformation("   Margin Factor: {Margin:P2} ({Leverage:F1}x leverage)", 
+            _config.InitialMarginFactor, 1.0m / _config.InitialMarginFactor);
         _logger.LogInformation("   Redis Index Key: {Key}", _config.RedisIndexKey);
         _logger.LogInformation("   Poll Interval: {Interval}ms", _config.RedisPollIntervalMs);
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
@@ -82,6 +86,11 @@ public class Worker : BackgroundService
                     {
                         _logger.LogDebug("Price update: ${Price:F2}", update.Price);
                         await _strategy.OnIndexPriceUpdateAsync(update.Price, stoppingToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected during shutdown - don't log as error
+                        _logger.LogDebug("Price update cancelled during shutdown");
                     }
                     catch (Exception ex)
                     {
@@ -135,9 +144,12 @@ public class Worker : BackgroundService
 
         try
         {
-            // Dispose price subscription
+            // Dispose price subscription first to stop new updates
             _priceSubscription?.Dispose();
             _logger.LogInformation("Price monitoring stopped");
+            
+            // Give a small grace period for any in-flight price updates to complete
+            await Task.Delay(50, CancellationToken.None);
 
             // Emergency stop strategy (cancel all orders)
             _logger.LogInformation("Cancelling all active orders...");

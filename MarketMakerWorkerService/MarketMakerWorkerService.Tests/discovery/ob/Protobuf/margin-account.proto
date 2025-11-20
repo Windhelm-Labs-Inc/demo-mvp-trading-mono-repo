@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "entity-id.proto";
+import "position.proto";
+import "order.proto";
+
+message MarginAccount {
+    bytes owner_id = 1;
+	EntityId hapi_address = 2;
+	bytes evm_address = 3;
+	uint64 balance = 4;
+	repeated Position positions = 8;
+	repeated Order orders = 9;
+}

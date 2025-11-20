@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+enum TransferKind {
+    Deposit = 0;
+    Withdraw = 1;
+    Charge = 2;
+    Credit = 3;
+    Order = 4;
+    Settlement = 5;
+}

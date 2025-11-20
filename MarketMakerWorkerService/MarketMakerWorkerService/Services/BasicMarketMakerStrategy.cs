@@ -56,10 +56,10 @@ public class BasicMarketMakerStrategy
         _logger.LogInformation("Initializing BasicMarketMakerStrategy");
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
         _logger.LogInformation("CONFIGURATION VALUES:");
-        _logger.LogInformation("  Spread: ${SpreadUsd:F2} USD (legacy: {SpreadBps} bps)",
-            _config.BaseSpreadUsd, _config.BaseSpreadBps);
-        _logger.LogInformation("  Level Spacing: ${LevelSpacingUsd:F2} USD (legacy: {LevelSpacingBps} bps)",
-            _config.LevelSpacingUsd, _config.LevelSpacingBps);
+        // _logger.LogInformation("  Spread: ${SpreadUsd:F2} USD (legacy: {SpreadBps} bps)",
+        //     _config.BaseSpreadUsd, _config.BaseSpreadBps);
+        // _logger.LogInformation("  Level Spacing: ${LevelSpacingUsd:F2} USD (legacy: {LevelSpacingBps} bps)",
+        //     _config.LevelSpacingUsd, _config.LevelSpacingBps);
         _logger.LogInformation("  Number of Levels: {NumLevels} per side", numLevels);
         _logger.LogInformation("  Initial Margin Factor: {MarginFactor} ({Pct:F0}% = {Leverage:F1}x leverage)",
             _config.InitialMarginFactor, _config.InitialMarginFactor * 100, 1.0m / _config.InitialMarginFactor);
@@ -67,10 +67,10 @@ public class BasicMarketMakerStrategy
         _logger.LogInformation("  Settlement Decimals: {SettlementDecimals}", _config.SettlementDecimals);
         _logger.LogInformation("  Redis Poll Interval: {PollIntervalMs}ms", _config.RedisPollIntervalMs);
         _logger.LogInformation("LIQUIDITY SHAPE:");
-        _logger.LogInformation("  Level 0: {L0} contracts", _liquidityShape.Level0Size);
-        _logger.LogInformation("  Levels 1-2: {L12} contracts each", _liquidityShape.Level1_2Size);
-        _logger.LogInformation("  Levels 3-9: {L39} contracts each", _liquidityShape.Level3_9Size);
-        _logger.LogInformation("  Total per side: {Total} contracts", _liquidityShape.TotalSize);
+        _logger.LogInformation("  Level 0: {L0} quantity (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level0Size, _config.TradingDecimals));
+        _logger.LogInformation("  Levels 1-2: {L12} quantity each (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level1_2Size, _config.TradingDecimals));
+        _logger.LogInformation("  Levels 3-9: {L39} quantity each (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level3_9Size, _config.TradingDecimals));
+        _logger.LogInformation("  Total per side: {Total} quantity (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.TotalSize, _config.TradingDecimals));
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
         
         _stateManager.InitializeLadder(numLevels);
@@ -91,13 +91,19 @@ public class BasicMarketMakerStrategy
             return;
         }
 
+        // Check cancellation before acquiring semaphore to avoid racing with shutdown
+        cancellationToken.ThrowIfCancellationRequested();
+
         await _strategyLock.WaitAsync(cancellationToken);
         try
         {
-            _logger.LogInformation("Processing index price update: ${Price:F2}", indexPrice);
+            _logger.LogDebug("Processing index price update: ${Price:F2}", indexPrice);
             
             // Get authentication token
             var token = await _authService.GetValidTokenAsync(cancellationToken);
+            
+            // Check cancellation after async operation
+            cancellationToken.ThrowIfCancellationRequested();
             
             // Calculate new price levels using FIXED USD spread and spacing
             var numLevels = _config.NumberOfLevels; // Use configured number of levels
@@ -127,18 +133,21 @@ public class BasicMarketMakerStrategy
                 askPrices,
                 quantities);
             
+            // Check cancellation before executing replacements
+            cancellationToken.ThrowIfCancellationRequested();
+            
             if (replacements.Count == 0)
             {
                 _logger.LogDebug("No order changes needed (price within tolerance)");
                 return;
             }
             
-            _logger.LogInformation("Need to replace {Count} orders", replacements.Count);
+            _logger.LogDebug("Need to replace {Count} orders", replacements.Count);
             
             // Execute order replacements
             await ExecuteReplacementsAsync(replacements, token, cancellationToken);
             
-            _logger.LogInformation("Successfully processed price update: ${Price:F2}", indexPrice);
+            _logger.LogDebug("Successfully processed price update: ${Price:F2}", indexPrice);
         }
         catch (Exception ex)
         {
@@ -160,6 +169,9 @@ public class BasicMarketMakerStrategy
         string jwtToken,
         CancellationToken cancellationToken)
     {
+        // Check cancellation before starting replacements
+        cancellationToken.ThrowIfCancellationRequested();
+        
         // Step 1: Cancel old orders in parallel (if they exist)
         var cancelsToProcess = replacements.Where(r => r.OldOrderId.HasValue).ToList();
         
@@ -195,9 +207,9 @@ public class BasicMarketMakerStrategy
                     
                     return (Success: false, Replacement: replacement);
                 }
-                catch (TaskCanceledException)
+                catch (OperationCanceledException)
                 {
-                    _logger.LogWarning("Timeout cancelling {Side} order {OrderId} at level {Level} - request cancelled, continuing",
+                    _logger.LogDebug("Cancelling {Side} order {OrderId} at level {Level} - operation cancelled during shutdown",
                         replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement);
@@ -218,6 +230,9 @@ public class BasicMarketMakerStrategy
             _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
                 successfulCancels, failedCancels);
         }
+        
+        // Check cancellation before submitting new orders
+        cancellationToken.ThrowIfCancellationRequested();
         
         // Step 2: Submit new orders in parallel
         if (replacements.Any())
@@ -271,9 +286,9 @@ public class BasicMarketMakerStrategy
                     
                     return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
                 }
-                catch (TaskCanceledException)
+                catch (OperationCanceledException)
                 {
-                    _logger.LogWarning("✗ Timeout submitting {Side} order at level {Level} - request cancelled, continuing",
+                    _logger.LogDebug("Submitting {Side} order at level {Level} - operation cancelled during shutdown",
                         replacement.Side, replacement.LevelIndex);
                     
                     return (Success: false, Replacement: replacement, OrderId: Guid.Empty);

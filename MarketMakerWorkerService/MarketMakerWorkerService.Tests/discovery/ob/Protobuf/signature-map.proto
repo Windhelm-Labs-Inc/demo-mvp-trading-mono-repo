@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+message SignatureMap {
+    repeated SignaturePair sigPair = 1;
+}
+message SignaturePair {
+    bytes pubKeyPrefix = 1;
+    oneof signature {
+        bytes ed25519 = 3;
+        bytes ECDSA_secp256k1 = 6;
+    }
+}

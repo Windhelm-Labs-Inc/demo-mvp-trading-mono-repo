@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package perpetuals.market.v1;
+option csharp_namespace = "Perpetuals.Market.Protobuf";
+
+import "order-slip.proto";
+
+message Trade {
+  OrderSlip taker   = 1;
+  repeated OrderSlip makers  = 2;
+  uint64 version = 3;
+}

@@ -75,7 +75,7 @@ public class RedisIndexWatcher
                                             Price: price,
                                             Timestamp: DateTime.UtcNow);
 
-                                        _logger.LogInformation(
+                                        _logger.LogDebug(
                                             "Index price updated: {Key} = ${Price:F2}",
                                             indexKey,
                                             price);
