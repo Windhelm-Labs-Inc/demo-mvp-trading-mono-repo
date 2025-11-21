@@ -200,9 +200,8 @@ Run as a single replica. Multiple instances will self-trade.
 
 ## Performance
 
-- Order update latency: 120-400ms in atomic mode
+- Order update latency: 100-200 in atomic mode
 - Orders per update: 2N (N bids + N asks, where N = `NumberOfLevels`)
-- Resource usage: ~50MB RAM, ~2% CPU
 
 ## Architecture
 
