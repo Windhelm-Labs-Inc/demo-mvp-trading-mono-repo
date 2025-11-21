@@ -133,9 +133,79 @@ public class MarketMakerConfiguration
     /// </summary>
     public decimal InitialMarginFactor { get; set; } = 0.2m;
     
+    // ===========================
+    // Order Update Strategy
+    // ===========================
     /// <summary>
-    /// Capital utilization ratio (0.80 = use 80% of available capital)
+    /// Order update behavior flag
+    /// 1 = Atomic replacement (submit new orders first, then cancel old - maintains continuous liquidity)
+    /// 0 = Sequential replacement (cancel old orders first, then submit new - creates temporary gaps)
+    /// Default: 1 (traditional sequential behavior)
     /// </summary>
-    public decimal BalanceUtilization { get; set; } = 0.80m;
+    public int UpdateBehaviorFlag { get; set; } = 1;
+    
+    /// <summary>
+    /// Delay in milliseconds between submitting new orders and canceling old orders in atomic mode
+    /// This gives the orderbook time to process new orders before canceling old ones
+    /// Recommended: 100-500ms for production, 0 to disable
+    /// Only applies when UpdateBehaviorFlag = 1 (atomic mode)
+    /// </summary>
+    public int AtomicReplacementDelayMs { get; set; } = 125;
+    
+    /// <summary>
+    /// Enable self-trade prevention in atomic mode
+    /// When enabled, checks if new orders would cross existing orders (self-trade risk)
+    /// If crossing detected, automatically falls back to sequential mode for that update
+    /// 1 = Enabled (recommended for production)
+    /// 0 = Disabled
+    /// Only applies when UpdateBehaviorFlag = 1 (atomic mode)
+    /// </summary>
+    public int EnableSelfTradePrevention { get; set; } = 1;
+    
+    /// <summary>
+    /// Delay in milliseconds between levels during sequential peeling
+    /// Used when self-trade prevention triggers side-aware sequential peeling
+    /// Orders are processed level-by-level (inside to outside) with this delay
+    /// Recommended: 5-20ms
+    /// Only applies when EnableSelfTradePrevention = 1 and crossing is detected
+    /// </summary>
+    public int SequentialPeelDelayMs { get; set; } = 5;
+    
+    // ===========================
+    // Continuous Settlement
+    // ===========================
+    /// <summary>
+    /// Enable continuous position settlement
+    /// When enabled, automatically settles matched long/short positions at:
+    /// - Service startup (after strategy initialization)
+    /// - After each token refresh (~800 seconds by default)
+    /// - Service shutdown (after canceling all orders)
+    /// 1 = Enabled
+    /// 0 = Disabled
+    /// Default: 0
+    /// </summary>
+    public int ContinuousSettlement { get; set; } = 0;
+    
+    // ===========================
+    // Metrics Configuration
+    // ===========================
+    /// <summary>
+    /// Enable OpenTelemetry metrics export to Azure Application Insights
+    /// 1 = Enabled, 0 = Disabled
+    /// Default: 0
+    /// </summary>
+    public int EnableMetrics { get; set; } = 0;
+
+    /// <summary>
+    /// OpenTelemetry metrics export interval in milliseconds
+    /// Default: 60000 (60 seconds)
+    /// </summary>
+    public int MetricsExportIntervalMs { get; set; } = 60000;
+
+    /// <summary>
+    /// Azure Application Insights connection string
+    /// </summary>
+    public string ApplicationInsightsConnectionString { get; set; } = 
+        "InstrumentationKey=01402b01-5969-41ad-91cc-b51cf86ba96e;IngestionEndpoint=https://eastus-8.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus.livediagnostics.monitor.azure.com/;ApplicationId=2a91edf1-7d8a-462b-b346-5cb0fb6af5ad";
 }
 

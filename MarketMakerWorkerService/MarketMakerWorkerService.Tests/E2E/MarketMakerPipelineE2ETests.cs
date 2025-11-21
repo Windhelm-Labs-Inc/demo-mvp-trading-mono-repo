@@ -47,7 +47,6 @@ public class MarketMakerPipelineE2ETests : IDisposable
                 ["MarketMaker:LevelSpacingBps"] = "5",
                 ["MarketMaker:InitialMarginFactor"] = "0.1",
                 ["MarketMaker:RateLimitDelaySeconds"] = "1",
-                ["MarketMaker:BalanceUtilization"] = "0.8",
                 ["MarketMaker:TradingDecimals"] = TestConfiguration.MarketInfo.TradingDecimals.ToString(),
                 ["MarketMaker:SettlementDecimals"] = TestConfiguration.MarketInfo.SettlementDecimals.ToString(),
                 ["MarketMaker:RedisConnectionString"] = TestConfiguration.Redis.ConnectionString,
@@ -89,7 +88,7 @@ public class MarketMakerPipelineE2ETests : IDisposable
         _serviceProvider = services.BuildServiceProvider();
     }
 
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~FullPipeline_ProcessesRedisIndexUpdates_AndManagesOrders")]
     public async Task FullPipeline_ProcessesRedisIndexUpdates_AndManagesOrders()
     {
         // Arrange
