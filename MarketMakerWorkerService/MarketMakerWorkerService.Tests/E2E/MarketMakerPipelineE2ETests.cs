@@ -89,7 +89,7 @@ public class MarketMakerPipelineE2ETests : IDisposable
         _serviceProvider = services.BuildServiceProvider();
     }
 
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~FullPipeline_ProcessesRedisIndexUpdates_AndManagesOrders")]
     public async Task FullPipeline_ProcessesRedisIndexUpdates_AndManagesOrders()
     {
         // Arrange

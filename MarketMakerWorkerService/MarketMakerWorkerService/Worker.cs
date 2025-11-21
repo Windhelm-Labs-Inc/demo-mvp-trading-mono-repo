@@ -14,6 +14,7 @@ public class Worker : BackgroundService
     private readonly BasicMarketMakerStrategy _strategy;
     private readonly IMarketDataService _marketDataService;
     private readonly IAuthenticationService _authService;
+    private readonly IContinuousSettlementService? _settlementService;
     private readonly MarketMakerConfiguration _config;
     private readonly ILogger<Worker> _logger;
     private IDisposable? _priceSubscription;
@@ -24,6 +25,7 @@ public class Worker : BackgroundService
         BasicMarketMakerStrategy strategy,
         IMarketDataService marketDataService,
         IAuthenticationService authService,
+        IContinuousSettlementService? settlementService,
         IOptions<MarketMakerConfiguration> config,
         ILogger<Worker> logger)
     {
@@ -31,6 +33,7 @@ public class Worker : BackgroundService
         _strategy = strategy;
         _marketDataService = marketDataService;
         _authService = authService;
+        _settlementService = settlementService;
         _config = config.Value;
         _logger = logger;
     }
@@ -51,6 +54,14 @@ public class Worker : BackgroundService
             _config.InitialMarginFactor, 1.0m / _config.InitialMarginFactor);
         _logger.LogInformation("   Redis Index Key: {Key}", _config.RedisIndexKey);
         _logger.LogInformation("   Poll Interval: {Interval}ms", _config.RedisPollIntervalMs);
+        
+        if (_config.ContinuousSettlement == 1)
+        {
+            _logger.LogInformation("   Continuous Settlement: ENABLED");
+            _logger.LogInformation("   Settlement Triggers: Startup, Shutdown, Token Refresh (~{Interval}s)", 
+                _config.TokenRefreshIntervalSeconds);
+        }
+        
         _logger.LogInformation("═══════════════════════════════════════════════════════════");
 
         try
@@ -68,6 +79,27 @@ public class Worker : BackgroundService
             _logger.LogInformation("Initializing market making strategy...");
             _strategy.Initialize();
             _logger.LogInformation("Strategy initialized successfully");
+
+            // Run settlement check on startup if enabled
+            if (_config.ContinuousSettlement == 1 && _settlementService != null)
+            {
+                _logger.LogInformation("═══════════════════════════════════════════════════════════");
+                _logger.LogInformation("Running STARTUP settlement check...");
+                _logger.LogInformation("═══════════════════════════════════════════════════════════");
+                
+                try
+                {
+                    var token = await _authService.GetValidTokenAsync(stoppingToken);
+                    await RunSettlementCheckAsync(token, stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Startup settlement check failed - continuing with service start");
+                    // Don't throw - settlement failure shouldn't prevent service from starting
+                }
+                
+                _logger.LogInformation("Startup settlement check complete");
+            }
 
             // Start price monitoring
             _logger.LogInformation("Starting Redis price monitoring (READ-ONLY)...");
@@ -144,17 +176,44 @@ public class Worker : BackgroundService
 
         try
         {
-            // Dispose price subscription first to stop new updates
+            // Step 1: Dispose price subscription first to stop new updates
             _priceSubscription?.Dispose();
             _logger.LogInformation("Price monitoring stopped");
             
-            // Give a small grace period for any in-flight price updates to complete
+            // Step 2: Give a small grace period for any in-flight price updates to complete
             await Task.Delay(50, CancellationToken.None);
 
-            // Emergency stop strategy (cancel all orders)
+            // Step 3: Emergency stop strategy (cancel all orders FIRST)
             _logger.LogInformation("Cancelling all active orders...");
             await _strategy.EmergencyStopAsync(cancellationToken);
             _logger.LogInformation("All orders cancelled");
+
+            // Step 4: Run settlement check AFTER orders are cancelled
+            if (_config.ContinuousSettlement == 1 && _settlementService != null)
+            {
+                _logger.LogInformation("═══════════════════════════════════════════════════════════");
+                _logger.LogInformation("Running SHUTDOWN settlement check...");
+                _logger.LogInformation("═══════════════════════════════════════════════════════════");
+                
+                try
+                {
+                    // Use a fresh cancellation token with timeout for shutdown settlement
+                    using var shutdownCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    var token = await _authService.GetValidTokenAsync(shutdownCts.Token);
+                    await RunSettlementCheckAsync(token, shutdownCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("Shutdown settlement cancelled (timeout or service stopping)");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Shutdown settlement check failed - continuing with shutdown");
+                    // Don't throw - settlement failure shouldn't prevent clean shutdown
+                }
+                
+                _logger.LogInformation("Shutdown settlement check complete");
+            }
 
             _logger.LogInformation("═══════════════════════════════════════════════════════════");
             _logger.LogInformation("Market Maker stopped cleanly");
@@ -186,6 +245,13 @@ public class Worker : BackgroundService
                     _logger.LogInformation("Background token refresh triggered");
                     var token = await _authService.AuthenticateAsync(stoppingToken);
                     _logger.LogInformation("Token refreshed successfully (length: {Length} chars)", token.Length);
+                    
+                    // Run settlement check after token refresh if enabled
+                    if (_config.ContinuousSettlement == 1 && _settlementService != null)
+                    {
+                        _logger.LogDebug("Running post-refresh settlement check...");
+                        await RunSettlementCheckAsync(token, stoppingToken);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -210,6 +276,47 @@ public class Worker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Fatal error in token refresh loop");
+        }
+    }
+
+    /// <summary>
+    /// Checks for settleable positions and executes settlement if found
+    /// Runs at startup, shutdown, and after each token refresh when enabled
+    /// </summary>
+    private async Task RunSettlementCheckAsync(string token, CancellationToken stoppingToken)
+    {
+        if (_settlementService == null)
+        {
+            _logger.LogWarning("Settlement service not registered");
+            return;
+        }
+        
+        try
+        {
+            _logger.LogDebug("Checking for settleable positions");
+            
+            var result = await _settlementService.CheckAndSettlePositionsAsync(
+                token, stoppingToken);
+            
+            if (result.Success && result.SettlementId != null)
+            {
+                _logger.LogInformation(
+                    "✓ Settled {Qty} units across {Count} positions (Settlement ID: {SettlementId})",
+                    result.QuantitySettled, result.PositionsSettled, result.SettlementId);
+            }
+            else if (result.Success)
+            {
+                _logger.LogDebug("No settlement needed: {Message}", result.ErrorMessage ?? "No positions");
+            }
+            else
+            {
+                _logger.LogWarning("Settlement failed: {Error}", result.ErrorMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Settlement check encountered an error");
+            // Don't throw - settlement failure shouldn't break the calling context
         }
     }
 }

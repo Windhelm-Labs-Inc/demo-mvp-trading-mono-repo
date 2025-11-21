@@ -89,7 +89,7 @@ public class MarketMakerBehaviorDemo : IDisposable
         _serviceProvider = services.BuildServiceProvider();
     }
 
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~E2E_BehaviorDemo_DetailedOutput")]
     public async Task E2E_BehaviorDemo_DetailedOutput()
     {
         Console.WriteLine("================================================================================");

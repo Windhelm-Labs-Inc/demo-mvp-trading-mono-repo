@@ -186,3 +186,30 @@ public record OrderReplacement
     /// </summary>
     public ulong NewQuantity { get; init; }
 }
+
+/// <summary>
+/// Result of a settlement operation
+/// </summary>
+public record SettlementResult
+{
+    public bool Success { get; init; }
+    public string? SettlementId { get; init; }
+    public decimal QuantitySettled { get; init; }
+    public int PositionsSettled { get; init; }
+    public string? ErrorMessage { get; init; }
+    
+    public static SettlementResult Settled(
+        string settlementId, decimal quantity, int positions) =>
+        new() { Success = true, SettlementId = settlementId, 
+                QuantitySettled = quantity, PositionsSettled = positions };
+    
+    public static SettlementResult NoPositions() =>
+        new() { Success = true, ErrorMessage = "No positions" };
+    
+    public static SettlementResult NoSettleable(decimal longQty, decimal shortQty) =>
+        new() { Success = true, 
+                ErrorMessage = $"No settleable (L:{longQty}, S:{shortQty})" };
+    
+    public static SettlementResult Failed(string error) =>
+        new() { Success = false, ErrorMessage = error };
+}

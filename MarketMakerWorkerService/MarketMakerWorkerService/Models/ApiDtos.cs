@@ -222,6 +222,29 @@ public record PositionInfo(
     [property: JsonPropertyName("entry_price")] ulong EntryPrice);
 
 // ===========================
+// Settlement API
+// ===========================
+
+/// <summary>
+/// Settlement quantity for a specific position
+/// </summary>
+public record SettlementQuantity(
+    [property: JsonPropertyName("position_id")] Guid PositionId,
+    [property: JsonPropertyName("quantity")] ulong Quantity);
+
+/// <summary>
+/// Request to settle positions
+/// </summary>
+public record SettlementRequest(
+    [property: JsonPropertyName("settlement_quantities")] List<SettlementQuantity> SettlementQuantities);
+
+/// <summary>
+/// Response from settlement API
+/// </summary>
+public record SettlementResponse(
+    [property: JsonPropertyName("settlement_id")] string SettlementId);
+
+// ===========================
 // Error Response (RFC 7807 Problem Details)
 // ===========================
 

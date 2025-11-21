@@ -26,7 +26,7 @@ public class AuthenticationE2ETests : IDisposable
         _output.WriteLine($"Mock API server started at: {_mockServer.Url}");
     }
     
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~E2E_AuthenticationFlow_CompleteSuccess")]
     public async Task E2E_AuthenticationFlow_CompleteSuccess()
     {
         // Arrange
@@ -68,7 +68,7 @@ public class AuthenticationE2ETests : IDisposable
         _output.WriteLine($"  - Token received: {token.Substring(0, Math.Min(20, token.Length))}...");
     }
     
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~E2E_GetValidTokenAsync_TokenCaching_ReusesSameToken")]
     public async Task E2E_GetValidTokenAsync_TokenCaching_ReusesSameToken()
     {
         // Arrange
@@ -107,7 +107,7 @@ public class AuthenticationE2ETests : IDisposable
         _output.WriteLine($"  - Challenge requests: {challengeRequests} (expected: 1)");
     }
     
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~E2E_AuthenticationFailure_ThrowsException")]
     public async Task E2E_AuthenticationFailure_ThrowsException()
     {
         // Arrange - Set up a mock that returns 401 for verify

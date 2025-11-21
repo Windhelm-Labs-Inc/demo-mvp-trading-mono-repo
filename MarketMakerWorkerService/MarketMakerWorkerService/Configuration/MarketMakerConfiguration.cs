@@ -175,5 +175,20 @@ public class MarketMakerConfiguration
     /// Only applies when EnableSelfTradePrevention = 1 and crossing is detected
     /// </summary>
     public int SequentialPeelDelayMs { get; set; } = 5;
+    
+    // ===========================
+    // Continuous Settlement
+    // ===========================
+    /// <summary>
+    /// Enable continuous position settlement
+    /// When enabled, automatically settles matched long/short positions at:
+    /// - Service startup (after strategy initialization)
+    /// - After each token refresh (~800 seconds by default)
+    /// - Service shutdown (after canceling all orders)
+    /// 1 = Enabled
+    /// 0 = Disabled
+    /// Default: 0
+    /// </summary>
+    public int ContinuousSettlement { get; set; } = 0;
 }
 

@@ -61,6 +61,7 @@ builder.Services.AddSingleton<IRedisConnectionService, RedisConnectionService>()
 builder.Services.AddSingleton<OrderStateManager>();
 builder.Services.AddSingleton<IOrderService, OrderService>();
 builder.Services.AddSingleton<IAccountService, AccountService>();
+builder.Services.AddSingleton<IContinuousSettlementService, ContinuousSettlementService>();
 
 // Register Stage 3 services
 builder.Services.AddSingleton<RedisIndexWatcher>();
