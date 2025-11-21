@@ -69,6 +69,10 @@ public class BasicMarketMakerStrategy
         _logger.LogInformation("  Update Behavior: {Flag} ({Mode})", 
             _config.UpdateBehaviorFlag, 
             _config.UpdateBehaviorFlag == 1 ? "ATOMIC - maintains liquidity" : "SEQUENTIAL - may create gaps");
+        if (_config.UpdateBehaviorFlag == 1 && _config.AtomicReplacementDelayMs > 0)
+        {
+            _logger.LogInformation("  Atomic Replacement Delay: {DelayMs}ms", _config.AtomicReplacementDelayMs);
+        }
         _logger.LogInformation("LIQUIDITY SHAPE:");
         _logger.LogInformation("  Level 0: {L0} quantity (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level0Size, _config.TradingDecimals));
         _logger.LogInformation("  Levels 1-2: {L12} quantity each (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level1_2Size, _config.TradingDecimals));
@@ -178,9 +182,21 @@ public class BasicMarketMakerStrategy
         if (_config.UpdateBehaviorFlag == 1)
         {
             _logger.LogDebug("Using ATOMIC order replacement strategy (maintains liquidity)");
-            // Submit new orders first, THEN cancel old ones
+            
+            // Submit new orders first
             await SubmitNewOrdersAsync(replacements, jwtToken, cancellationToken);
+            
+            // Wait for orderbook to process new orders before canceling old ones
+            if (_config.AtomicReplacementDelayMs > 0)
+            {
+                _logger.LogDebug("Waiting {DelayMs}ms for orderbook to process new orders before canceling old ones", 
+                    _config.AtomicReplacementDelayMs);
+                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+            }
+            
             cancellationToken.ThrowIfCancellationRequested();
+            
+            // Then cancel old ones
             await CancelOldOrdersAsync(replacements, jwtToken, cancellationToken, isAtomicMode: true);
         }
         else
@@ -194,7 +210,7 @@ public class BasicMarketMakerStrategy
     }
     
     /// <summary>
-    /// Cancel old orders in parallel
+    /// Cancel old orders in parallel with retry logic
     /// </summary>
     private async Task CancelOldOrdersAsync(
         List<OrderReplacement> replacements,
@@ -212,7 +228,57 @@ public class BasicMarketMakerStrategy
         
         _logger.LogDebug("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
         
-        var cancelTasks = cancelsToProcess.Select(async replacement =>
+        // First attempt
+        var cancelResults = await CancelOrderBatchAsync(cancelsToProcess, jwtToken, cancellationToken, isAtomicMode);
+        
+        var successfulCancels = cancelResults.Count(r => r.Success);
+        var failedCancels = cancelResults.Count(r => !r.Success);
+        
+        _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
+            successfulCancels, failedCancels);
+        
+        // Retry failed cancellations once
+        if (failedCancels > 0)
+        {
+            var failedReplacements = cancelResults.Where(r => !r.Success).Select(r => r.Replacement).ToList();
+            
+            _logger.LogDebug("Retrying {Count} failed cancellations after 50ms delay", failedReplacements.Count);
+            
+            try
+            {
+                await Task.Delay(50, cancellationToken);
+                
+                var retryResults = await CancelOrderBatchAsync(failedReplacements, jwtToken, cancellationToken, isAtomicMode);
+                
+                var retrySuccesses = retryResults.Count(r => r.Success);
+                var retryFailures = retryResults.Count(r => !r.Success);
+                
+                _logger.LogDebug("Retry batch complete: {Success} succeeded, {Failed} failed",
+                    retrySuccesses, retryFailures);
+                
+                if (retryFailures > 0)
+                {
+                    _logger.LogWarning("{Count} orders could not be cancelled after retry (likely already filled/closed)",
+                        retryFailures);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Retry cancelled during shutdown");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Execute a batch of order cancellations in parallel
+    /// </summary>
+    private async Task<(bool Success, OrderReplacement Replacement)[]> CancelOrderBatchAsync(
+        List<OrderReplacement> replacements,
+        string jwtToken,
+        CancellationToken cancellationToken,
+        bool isAtomicMode)
+    {
+        var cancelTasks = replacements.Select(async replacement =>
         {
             try
             {
@@ -260,12 +326,7 @@ public class BasicMarketMakerStrategy
             }
         });
         
-        var cancelResults = await Task.WhenAll(cancelTasks);
-        var successfulCancels = cancelResults.Count(r => r.Success);
-        var failedCancels = cancelResults.Count(r => !r.Success);
-        
-        _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
-            successfulCancels, failedCancels);
+        return await Task.WhenAll(cancelTasks);
     }
     
     /// <summary>

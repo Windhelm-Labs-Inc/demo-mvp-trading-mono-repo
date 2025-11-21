@@ -148,5 +148,13 @@ public class MarketMakerConfiguration
     /// Default: 1 (traditional sequential behavior)
     /// </summary>
     public int UpdateBehaviorFlag { get; set; } = 1;
+    
+    /// <summary>
+    /// Delay in milliseconds between submitting new orders and canceling old orders in atomic mode
+    /// This gives the orderbook time to process new orders before canceling old ones
+    /// Recommended: 100-500ms for production, 0 to disable
+    /// Only applies when UpdateBehaviorFlag = 1 (atomic mode)
+    /// </summary>
+    public int AtomicReplacementDelayMs { get; set; } = 125;
 }
 
