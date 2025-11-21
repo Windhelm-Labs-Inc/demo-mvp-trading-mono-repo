@@ -10,6 +10,8 @@ Redis publishes BTC index → Service updates order prices → Orders stay cente
 
 The service places N levels of bids and asks around the index price. When the index moves, it cancels old orders and places new ones at the correct prices. Orders are sized in a liquidity shape (larger at top of book, smaller deeper in).
 
+**Why Atomic Replacement:** The API lacks an order update endpoint. To maintain continuous liquidity during price updates, new orders are submitted before old ones are canceled, simulating update behavior until the engineering team adds native support.
+
 Configure the number of levels in `appsettings.json` or via environment variable `NUMBER_OF_LEVELS`.
 
 ## Configuration
@@ -94,6 +96,38 @@ When atomic mode detects that new orders would cross existing orders (self-trade
 
 This removes the "victim" side before placing the "aggressor" side. Processes levels from inside-out (L0→LN), so outer levels stay live while inner levels update, minimizing liquidity gaps.
 
+## Continuous Settlement
+
+The orderbook accumulates long/short positions as orders fill. Since there's no auto-settlement, the service periodically settles matched positions to prevent balance depletion.
+
+```bash
+CONTINUOUS_SETTLEMENT=0  # 0=Disabled, 1=Enabled
+```
+
+**When enabled, settlement runs:**
+- On startup
+- After each token refresh (~15 minutes)
+- On shutdown
+
+Settlement is automatic and requires no manual intervention. Positions are matched and netted (e.g., 100 long + 80 short → settle 80, leaving 20 long).
+
+## Metrics and Observability
+
+The service can export operational metrics to Azure Application Insights:
+
+```bash
+ENABLE_METRICS=0                             # 0=Disabled, 1=Enabled
+METRICS_EXPORT_INTERVAL_MS=60000             # Export interval (ms)
+APPLICATIONINSIGHTS_CONNECTION_STRING=...    # Azure connection string
+```
+
+**Tracked metrics:**
+- Orders placed/canceled (success/failure counts)
+- Self-trade prevention triggers (by side: bids/asks/both)
+- Index update success/failure counts
+
+Metrics help monitor market maker health, order fill rates, and API reliability.
+
 ## Running Locally
 
 ```bash
@@ -107,13 +141,28 @@ dotnet run
 
 Set these application settings:
 ```
+# Required
 HEDERA_ACCOUNT_ID=0.0.XXXXXXX
 HEDERA_PRIVATE_KEY_DER_HEX=...
 HEDERA_LEDGER_ID=testnet
 REDIS_CONNECTION_STRING=...
+
+# Order behavior
 UPDATE_BEHAVIOR_FLAG=1
 ATOMIC_REPLACEMENT_DELAY_MS=300
 ENABLE_SELF_TRADE_PREVENTION=1
+
+# Liquidity ladder (optional - has defaults)
+NUMBER_OF_LEVELS=4
+BASE_SPREAD_USD=100.00
+LEVEL_SPACING_USD=1.00
+
+# Settlement (recommended)
+CONTINUOUS_SETTLEMENT=1
+
+# Metrics (optional)
+ENABLE_METRICS=1
+APPLICATIONINSIGHTS_CONNECTION_STRING=...
 ```
 
 Run as a single replica. Multiple instances will self-trade.
@@ -121,31 +170,29 @@ Run as a single replica. Multiple instances will self-trade.
 ## Common Issues
 
 **"Order was already closed, filled or did not exist"**
-- Normal. Means orders filled before cancellation could complete.
-- High rate in volatile markets is expected (you're making money).
-- Not an error despite the log level.
-
-**Self-trade warnings appearing frequently**
-- Increase `ATOMIC_REPLACEMENT_DELAY_MS` to 500ms
-- Check if spread is too tight for current volatility
-- Temporarily switch to sequential mode (`UPDATE_BEHAVIOR_FLAG=0`)
+- Normal. Means orders filled before cancellation could complete (you're making money).
+- These are now logged at Debug level to reduce noise.
+- Monitor via `orders.cancel.failed` metric instead of logs.
+- High rate in volatile markets is expected.
 
 **Orders not being placed**
-- Check authentication logs
+- Turn on Debug logging & check authentication logs
+- Check API & Dashboard
+- Check Postgres instance for maxed out CPU or other indications
 - Verify account balance
 - Confirm API endpoint is reachable
 
-**Service consuming too much memory/CPU**
-- Service is normally <100MB RAM, <5% CPU
-- High usage indicates network issues or API problems
-- Check for retry storms in logs
+**Position balance growing unexpectedly**
+- Enable continuous settlement (`CONTINUOUS_SETTLEMENT=1`)
+- Check settlement logs at token refresh intervals
+- Verify settlement API endpoint is accessible
 
 ## Log Levels
 
-- `INF`: Normal operation (startup, shutdown, price updates)
-- `WRN`: Self-trade prevention triggered, retry attempts
+- `INF`: Normal operation (startup, shutdown, price updates, settlement)
+- `WRN`: Persistent order failures after retry
 - `ERR`: API failures, order placement failures
-- `DBG`: Detailed order flow (enable for troubleshooting only)
+- `DBG`: Order cancellations, detailed order flow, filled order failures (use metrics instead)
 
 ## Performance
 
