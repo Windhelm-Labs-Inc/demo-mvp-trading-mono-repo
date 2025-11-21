@@ -133,11 +133,6 @@ public class MarketMakerConfiguration
     /// </summary>
     public decimal InitialMarginFactor { get; set; } = 0.2m;
     
-    /// <summary>
-    /// Capital utilization ratio (0.80 = use 80% of available capital)
-    /// </summary>
-    public decimal BalanceUtilization { get; set; } = 0.80m;
-    
     // ===========================
     // Order Update Strategy
     // ===========================
