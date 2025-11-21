@@ -164,11 +164,6 @@ LEVELS_3_TO_9_QUANTITY:0.000001 #<- quantity 100
 # Settlement (recommended)
 CONTINUOUS_SETTLEMENT=1
 
-
-"AtomicReplacementDelayMs": "${ATOMIC_REPLACEMENT_DELAY_MS:300}",
-    "EnableSelfTradePrevention": "${ENABLE_SELF_TRADE_PREVENTION:1}",
-    "SequentialPeelDelayMs": "${SEQUENTIAL_PEEL_DELAY_MS:5}",
-
 # Metrics (optional)
 ENABLE_METRICS=1
 APPLICATIONINSIGHTS_CONNECTION_STRING=...
