@@ -69,9 +69,18 @@ public class BasicMarketMakerStrategy
         _logger.LogInformation("  Update Behavior: {Flag} ({Mode})", 
             _config.UpdateBehaviorFlag, 
             _config.UpdateBehaviorFlag == 1 ? "ATOMIC - maintains liquidity" : "SEQUENTIAL - may create gaps");
-        if (_config.UpdateBehaviorFlag == 1 && _config.AtomicReplacementDelayMs > 0)
+        if (_config.UpdateBehaviorFlag == 1)
         {
-            _logger.LogInformation("  Atomic Replacement Delay: {DelayMs}ms", _config.AtomicReplacementDelayMs);
+            if (_config.AtomicReplacementDelayMs > 0)
+            {
+                _logger.LogInformation("  Atomic Replacement Delay: {DelayMs}ms", _config.AtomicReplacementDelayMs);
+            }
+            _logger.LogInformation("  Self-Trade Prevention: {Status}", 
+                _config.EnableSelfTradePrevention == 1 ? "ENABLED" : "DISABLED");
+            if (_config.EnableSelfTradePrevention == 1)
+            {
+                _logger.LogInformation("  Sequential Peel Delay: {DelayMs}ms", _config.SequentialPeelDelayMs);
+            }
         }
         _logger.LogInformation("LIQUIDITY SHAPE:");
         _logger.LogInformation("  Level 0: {L0} quantity (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level0Size, _config.TradingDecimals));
@@ -168,8 +177,113 @@ public class BasicMarketMakerStrategy
     }
 
     /// <summary>
+    /// Check if new orders would cross existing orders (self-trade risk)
+    /// Returns tuple indicating which side(s) would self-trade
+    /// </summary>
+    private (bool BidsCross, bool AsksCross) DetectCrossing(List<OrderReplacement> replacements)
+    {
+        var currentBids = _stateManager.GetAllBidLevels();
+        var currentAsks = _stateManager.GetAllAskLevels();
+        
+        // Get new bid and ask prices from replacements
+        var newBids = replacements.Where(r => r.Side == ContractSide.Long).OrderByDescending(r => r.NewPrice).ToList();
+        var newAsks = replacements.Where(r => r.Side == ContractSide.Short).OrderBy(r => r.NewPrice).ToList();
+        
+        bool bidsCross = false;
+        bool asksCross = false;
+        
+        // Check if best new bid >= any current ask (would match immediately)
+        if (newBids.Any())
+        {
+            var bestNewBid = newBids.First().NewPrice;
+            foreach (var currentAsk in currentAsks)
+            {
+                if (currentAsk?.CurrentOrderId.HasValue == true && currentAsk.CurrentPrice > 0)
+                {
+                    if (bestNewBid >= currentAsk.CurrentPrice)
+                    {
+                        _logger.LogWarning("Bid crossing detected: New bid ${NewBid} >= Current ask ${CurrentAsk}",
+                            PriceCalculator.FromBaseUnits(bestNewBid, _config.TradingDecimals),
+                            PriceCalculator.FromBaseUnits(currentAsk.CurrentPrice, _config.TradingDecimals));
+                        bidsCross = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Check if best new ask <= any current bid (would match immediately)
+        if (newAsks.Any())
+        {
+            var bestNewAsk = newAsks.First().NewPrice;
+            foreach (var currentBid in currentBids)
+            {
+                if (currentBid?.CurrentOrderId.HasValue == true && currentBid.CurrentPrice > 0)
+                {
+                    if (bestNewAsk <= currentBid.CurrentPrice)
+                    {
+                        _logger.LogWarning("Ask crossing detected: New ask ${NewAsk} <= Current bid ${CurrentBid}",
+                            PriceCalculator.FromBaseUnits(bestNewAsk, _config.TradingDecimals),
+                            PriceCalculator.FromBaseUnits(currentBid.CurrentPrice, _config.TradingDecimals));
+                        asksCross = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return (bidsCross, asksCross);
+    }
+    
+    /// <summary>
+    /// Execute sequential peeling for a specific side (level-by-level processing)
+    /// Processes orders inside-to-outside (L0 to LN) to minimize self-trading
+    /// </summary>
+    private async Task SequentialPeelBySideAsync(
+        List<OrderReplacement> sideReplacements,
+        string jwtToken,
+        CancellationToken cancellationToken)
+    {
+        var levels = sideReplacements.GroupBy(r => r.LevelIndex).OrderBy(g => g.Key);
+        
+        foreach (var levelGroup in levels)
+        {
+            var levelReplacements = levelGroup.ToList();
+            
+            // Cancel old orders at this level
+            var cancelsToProcess = levelReplacements.Where(r => r.OldOrderId.HasValue).ToList();
+            if (cancelsToProcess.Any())
+            {
+                var cancelResults = await CancelOrderBatchAsync(cancelsToProcess, jwtToken, cancellationToken, isAtomicMode: false);
+                var successCount = cancelResults.Count(r => r.Success);
+                _logger.LogDebug("Level {Level}: Cancelled {Success}/{Total} orders",
+                    levelGroup.Key, successCount, cancelsToProcess.Count);
+            }
+            
+            // Wait between cancel and submit
+            if (_config.SequentialPeelDelayMs > 0)
+            {
+                await Task.Delay(_config.SequentialPeelDelayMs, cancellationToken);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Submit new orders at this level
+            await SubmitNewOrdersAsync(levelReplacements, jwtToken, cancellationToken);
+            
+            // Wait between levels
+            if (_config.SequentialPeelDelayMs > 0)
+            {
+                await Task.Delay(_config.SequentialPeelDelayMs, cancellationToken);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+    
+    /// <summary>
     /// Execute order replacements with configurable behavior
-    /// UpdateBehaviorFlag=1: Atomic (submit first, maintains liquidity)
+    /// UpdateBehaviorFlag=1: Atomic with side-aware self-trade prevention
     /// UpdateBehaviorFlag=0: Sequential (cancel first, creates gap)
     /// </summary>
     private async Task ExecuteReplacementsAsync(
@@ -181,6 +295,75 @@ public class BasicMarketMakerStrategy
         
         if (_config.UpdateBehaviorFlag == 1)
         {
+            // Check for self-trade risk if prevention is enabled
+            if (_config.EnableSelfTradePrevention == 1)
+            {
+                var (bidsCross, asksCross) = DetectCrossing(replacements);
+                
+                if (bidsCross || asksCross)
+                {
+                    _logger.LogWarning("Self-trade risk detected - applying side-aware sequential peeling");
+                    
+                    var bidReplacements = replacements.Where(r => r.Side == ContractSide.Long).ToList();
+                    var askReplacements = replacements.Where(r => r.Side == ContractSide.Short).ToList();
+                    
+                    if (bidsCross && asksCross)
+                    {
+                        // Both sides cross - sequential peel both sides
+                        _logger.LogDebug("Both sides crossing - sequential peel on BOTH sides");
+                        await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
+                        await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
+                    }
+                    else if (bidsCross)
+                    {
+                        // Bids crossing asks - peel ASKS (victims), atomic for BIDS (aggressors)
+                        _logger.LogDebug("Bids crossing - sequential peel ASKS (remove victims first), then atomic BIDS");
+                        
+                        // Sequential peel asks (the side being crossed - remove victims first)
+                        await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
+                        
+                        // Atomic for bids (submit then cancel - now safe, no old asks to match)
+                        if (bidReplacements.Any())
+                        {
+                            await SubmitNewOrdersAsync(bidReplacements, jwtToken, cancellationToken);
+                            
+                            if (_config.AtomicReplacementDelayMs > 0)
+                            {
+                                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+                            }
+                            
+                            cancellationToken.ThrowIfCancellationRequested();
+                            await CancelOldOrdersAsync(bidReplacements, jwtToken, cancellationToken, isAtomicMode: true);
+                        }
+                    }
+                    else // asksCross
+                    {
+                        // Asks crossing bids - peel BIDS (victims), atomic for ASKS (aggressors)
+                        _logger.LogDebug("Asks crossing - sequential peel BIDS (remove victims first), then atomic ASKS");
+                        
+                        // Sequential peel bids (the side being crossed - remove victims first)
+                        await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
+                        
+                        // Atomic for asks (submit then cancel - now safe, no old bids to match)
+                        if (askReplacements.Any())
+                        {
+                            await SubmitNewOrdersAsync(askReplacements, jwtToken, cancellationToken);
+                            
+                            if (_config.AtomicReplacementDelayMs > 0)
+                            {
+                                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+                            }
+                            
+                            cancellationToken.ThrowIfCancellationRequested();
+                            await CancelOldOrdersAsync(askReplacements, jwtToken, cancellationToken, isAtomicMode: true);
+                        }
+                    }
+                    
+                    return;
+                }
+            }
+            
+            // Normal atomic mode - no crossing detected
             _logger.LogDebug("Using ATOMIC order replacement strategy (maintains liquidity)");
             
             // Submit new orders first

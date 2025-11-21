@@ -156,5 +156,24 @@ public class MarketMakerConfiguration
     /// Only applies when UpdateBehaviorFlag = 1 (atomic mode)
     /// </summary>
     public int AtomicReplacementDelayMs { get; set; } = 125;
+    
+    /// <summary>
+    /// Enable self-trade prevention in atomic mode
+    /// When enabled, checks if new orders would cross existing orders (self-trade risk)
+    /// If crossing detected, automatically falls back to sequential mode for that update
+    /// 1 = Enabled (recommended for production)
+    /// 0 = Disabled
+    /// Only applies when UpdateBehaviorFlag = 1 (atomic mode)
+    /// </summary>
+    public int EnableSelfTradePrevention { get; set; } = 1;
+    
+    /// <summary>
+    /// Delay in milliseconds between levels during sequential peeling
+    /// Used when self-trade prevention triggers side-aware sequential peeling
+    /// Orders are processed level-by-level (inside to outside) with this delay
+    /// Recommended: 5-20ms
+    /// Only applies when EnableSelfTradePrevention = 1 and crossing is detected
+    /// </summary>
+    public int SequentialPeelDelayMs { get; set; } = 5;
 }
 
