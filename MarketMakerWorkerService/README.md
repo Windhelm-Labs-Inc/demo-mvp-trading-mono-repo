@@ -190,9 +190,9 @@ Run as a single replica. Multiple instances will self-trade.
 ## Log Levels
 
 - `INF`: Normal operation (startup, shutdown, price updates, settlement)
-- `WRN`: Persistent order failures after retry
+- `WRN`: We got rid of most of these. Should only occur on settlement issues.
 - `ERR`: API failures, order placement failures
-- `DBG`: Order cancellations, detailed order flow, filled order failures (use metrics instead)
+- `DBG`: Order cancellations, detailed order flow, filled order failures (use metrics instead in staging/prod)
 
 ## Performance
 
