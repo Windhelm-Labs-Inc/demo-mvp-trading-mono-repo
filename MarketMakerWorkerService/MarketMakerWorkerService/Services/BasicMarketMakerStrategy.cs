@@ -202,7 +202,7 @@ public class BasicMarketMakerStrategy
                 {
                     if (bestNewBid >= currentAsk.CurrentPrice)
                     {
-                        _logger.LogWarning("Bid crossing detected: New bid ${NewBid} >= Current ask ${CurrentAsk}",
+                        _logger.LogDebug("Bid crossing detected: New bid ${NewBid} >= Current ask ${CurrentAsk}",
                             PriceCalculator.FromBaseUnits(bestNewBid, _config.TradingDecimals),
                             PriceCalculator.FromBaseUnits(currentAsk.CurrentPrice, _config.TradingDecimals));
                         bidsCross = true;
@@ -222,7 +222,7 @@ public class BasicMarketMakerStrategy
                 {
                     if (bestNewAsk <= currentBid.CurrentPrice)
                     {
-                        _logger.LogWarning("Ask crossing detected: New ask ${NewAsk} <= Current bid ${CurrentBid}",
+                        _logger.LogDebug("Ask crossing detected: New ask ${NewAsk} <= Current bid ${CurrentBid}",
                             PriceCalculator.FromBaseUnits(bestNewAsk, _config.TradingDecimals),
                             PriceCalculator.FromBaseUnits(currentBid.CurrentPrice, _config.TradingDecimals));
                         asksCross = true;
@@ -302,7 +302,7 @@ public class BasicMarketMakerStrategy
                 
                 if (bidsCross || asksCross)
                 {
-                    _logger.LogWarning("Self-trade risk detected - applying side-aware sequential peeling");
+                    _logger.LogDebug("Self-trade risk detected - applying side-aware sequential peeling");
                     
                     var bidReplacements = replacements.Where(r => r.Side == ContractSide.Long).ToList();
                     var askReplacements = replacements.Where(r => r.Side == ContractSide.Short).ToList();
