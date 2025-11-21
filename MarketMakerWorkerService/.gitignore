@@ -1,6 +1,9 @@
 # Environment files with sensitive data
 .env
 
+**.txt
+**.log
+
 # User-specific files
 *.suo
 *.user
