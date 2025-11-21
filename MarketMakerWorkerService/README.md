@@ -147,18 +147,27 @@ HEDERA_PRIVATE_KEY_DER_HEX=...
 HEDERA_LEDGER_ID=testnet
 REDIS_CONNECTION_STRING=...
 
-# Order behavior
+# Order behaviour
 UPDATE_BEHAVIOR_FLAG=1
-ATOMIC_REPLACEMENT_DELAY_MS=300
-ENABLE_SELF_TRADE_PREVENTION=1
+ATOMIC_REPLACEMENT_DELAY_MS=300 #<-- Shorter delays result in a higher likelihood of cancel requests landing before OB is updated. 
+ENABLE_SELF_TRADE_PREVENTION=1 <- STP protection
+SEQUENTIAL_PEEL_DELAY_MS=5 #<- Onion peel from inside book to out, STP, side specific, delay prevents the resting liquidity from vanishing. Increase according to system performance. 
 
 # Liquidity ladder (optional - has defaults)
 NUMBER_OF_LEVELS=4
 BASE_SPREAD_USD=100.00
 LEVEL_SPACING_USD=1.00
+LEVEL_0_QUANTITY=0.00001 #<- quantity 1000
+LEVELS_1_TO_2_QUANTITY:0.000005 #<- quantity 500
+LEVELS_3_TO_9_QUANTITY:0.000001 #<- quantity 100
 
 # Settlement (recommended)
 CONTINUOUS_SETTLEMENT=1
+
+
+"AtomicReplacementDelayMs": "${ATOMIC_REPLACEMENT_DELAY_MS:300}",
+    "EnableSelfTradePrevention": "${ENABLE_SELF_TRADE_PREVENTION:1}",
+    "SequentialPeelDelayMs": "${SEQUENTIAL_PEEL_DELAY_MS:5}",
 
 # Metrics (optional)
 ENABLE_METRICS=1
