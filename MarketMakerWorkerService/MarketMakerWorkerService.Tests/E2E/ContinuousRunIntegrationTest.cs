@@ -126,7 +126,7 @@ public class ContinuousRunIntegrationTest : IDisposable
         _serviceProvider = services.BuildServiceProvider();
     }
     
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~RunFullCycleForNSeconds")]
     public async Task RunFullCycleForNSeconds()
     {
         _testLogger.LogInformation("================================================================================");

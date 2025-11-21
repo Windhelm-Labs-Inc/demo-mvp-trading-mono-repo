@@ -48,7 +48,6 @@ public class MarketMakerBehaviorDemo : IDisposable
                 ["MarketMaker:BaseSpreadUsd"] = "1.00",  // FIXED $1.00 USD spread
                 ["MarketMaker:LevelSpacingUsd"] = "0.10", // FIXED $0.10 USD spacing between levels
                 ["MarketMaker:InitialMarginFactor"] = "0.1",
-                ["MarketMaker:BalanceUtilization"] = "0.8",
                 ["MarketMaker:TradingDecimals"] = TestConfiguration.MarketInfo.TradingDecimals.ToString(),
                 ["MarketMaker:SettlementDecimals"] = TestConfiguration.MarketInfo.SettlementDecimals.ToString(),
                 ["MarketMaker:RedisConnectionString"] = TestConfiguration.Redis.ConnectionString,
@@ -89,7 +88,7 @@ public class MarketMakerBehaviorDemo : IDisposable
         _serviceProvider = services.BuildServiceProvider();
     }
 
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~E2E_BehaviorDemo_DetailedOutput")]
     public async Task E2E_BehaviorDemo_DetailedOutput()
     {
         Console.WriteLine("================================================================================");

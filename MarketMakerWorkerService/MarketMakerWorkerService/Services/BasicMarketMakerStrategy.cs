@@ -16,6 +16,7 @@ public class BasicMarketMakerStrategy
     private readonly IOrderService _orderService;
     private readonly IAccountService _accountService;
     private readonly OrderStateManager _stateManager;
+    private readonly MetricsService _metrics;
     private readonly ILogger<BasicMarketMakerStrategy> _logger;
     
     private readonly SemaphoreSlim _strategyLock = new(1, 1);
@@ -28,6 +29,7 @@ public class BasicMarketMakerStrategy
         IOrderService orderService,
         IAccountService accountService,
         OrderStateManager stateManager,
+        MetricsService metrics,
         ILogger<BasicMarketMakerStrategy> logger)
     {
         _config = config.Value;
@@ -35,6 +37,7 @@ public class BasicMarketMakerStrategy
         _orderService = orderService;
         _accountService = accountService;
         _stateManager = stateManager;
+        _metrics = metrics;
         _logger = logger;
         
         // Use configured liquidity shape
@@ -66,6 +69,22 @@ public class BasicMarketMakerStrategy
         _logger.LogInformation("  Trading Decimals: {TradingDecimals}", _config.TradingDecimals);
         _logger.LogInformation("  Settlement Decimals: {SettlementDecimals}", _config.SettlementDecimals);
         _logger.LogInformation("  Redis Poll Interval: {PollIntervalMs}ms", _config.RedisPollIntervalMs);
+        _logger.LogInformation("  Update Behavior: {Flag} ({Mode})", 
+            _config.UpdateBehaviorFlag, 
+            _config.UpdateBehaviorFlag == 1 ? "ATOMIC - maintains liquidity" : "SEQUENTIAL - may create gaps");
+        if (_config.UpdateBehaviorFlag == 1)
+        {
+            if (_config.AtomicReplacementDelayMs > 0)
+            {
+                _logger.LogInformation("  Atomic Replacement Delay: {DelayMs}ms", _config.AtomicReplacementDelayMs);
+            }
+            _logger.LogInformation("  Self-Trade Prevention: {Status}", 
+                _config.EnableSelfTradePrevention == 1 ? "ENABLED" : "DISABLED");
+            if (_config.EnableSelfTradePrevention == 1)
+            {
+                _logger.LogInformation("  Sequential Peel Delay: {DelayMs}ms", _config.SequentialPeelDelayMs);
+            }
+        }
         _logger.LogInformation("LIQUIDITY SHAPE:");
         _logger.LogInformation("  Level 0: {L0} quantity (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level0Size, _config.TradingDecimals));
         _logger.LogInformation("  Levels 1-2: {L12} quantity each (base units)", PriceCalculator.ToBaseUnits(_liquidityShape.Level1_2Size, _config.TradingDecimals));
@@ -148,10 +167,12 @@ public class BasicMarketMakerStrategy
             await ExecuteReplacementsAsync(replacements, token, cancellationToken);
             
             _logger.LogDebug("Successfully processed price update: ${Price:F2}", indexPrice);
+            _metrics.RecordIndexUpdateSuccess();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing index price update: ${Price:F2}", indexPrice);
+            _metrics.RecordIndexUpdateFailure();
             throw;
         }
         finally
@@ -161,159 +182,451 @@ public class BasicMarketMakerStrategy
     }
 
     /// <summary>
-    /// Execute order replacements: cancel old orders, submit new ones
-    /// Uses parallel execution for maximum performance (no rate limits on API)
+    /// Check if new orders would cross existing orders (self-trade risk)
+    /// Returns tuple indicating which side(s) would self-trade
+    /// </summary>
+    private (bool BidsCross, bool AsksCross) DetectCrossing(List<OrderReplacement> replacements)
+    {
+        var currentBids = _stateManager.GetAllBidLevels();
+        var currentAsks = _stateManager.GetAllAskLevels();
+        
+        // Get new bid and ask prices from replacements
+        var newBids = replacements.Where(r => r.Side == ContractSide.Long).OrderByDescending(r => r.NewPrice).ToList();
+        var newAsks = replacements.Where(r => r.Side == ContractSide.Short).OrderBy(r => r.NewPrice).ToList();
+        
+        bool bidsCross = false;
+        bool asksCross = false;
+        
+        // Check if best new bid >= any current ask (would match immediately)
+        if (newBids.Any())
+        {
+            var bestNewBid = newBids.First().NewPrice;
+            foreach (var currentAsk in currentAsks)
+            {
+                if (currentAsk?.CurrentOrderId.HasValue == true && currentAsk.CurrentPrice > 0)
+                {
+                    if (bestNewBid >= currentAsk.CurrentPrice)
+                    {
+                        _logger.LogDebug("Bid crossing detected: New bid ${NewBid} >= Current ask ${CurrentAsk}",
+                            PriceCalculator.FromBaseUnits(bestNewBid, _config.TradingDecimals),
+                            PriceCalculator.FromBaseUnits(currentAsk.CurrentPrice, _config.TradingDecimals));
+                        bidsCross = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Check if best new ask <= any current bid (would match immediately)
+        if (newAsks.Any())
+        {
+            var bestNewAsk = newAsks.First().NewPrice;
+            foreach (var currentBid in currentBids)
+            {
+                if (currentBid?.CurrentOrderId.HasValue == true && currentBid.CurrentPrice > 0)
+                {
+                    if (bestNewAsk <= currentBid.CurrentPrice)
+                    {
+                        _logger.LogDebug("Ask crossing detected: New ask ${NewAsk} <= Current bid ${CurrentBid}",
+                            PriceCalculator.FromBaseUnits(bestNewAsk, _config.TradingDecimals),
+                            PriceCalculator.FromBaseUnits(currentBid.CurrentPrice, _config.TradingDecimals));
+                        asksCross = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return (bidsCross, asksCross);
+    }
+    
+    /// <summary>
+    /// Execute sequential peeling for a specific side (level-by-level processing)
+    /// Processes orders inside-to-outside (L0 to LN) to minimize self-trading
+    /// </summary>
+    private async Task SequentialPeelBySideAsync(
+        List<OrderReplacement> sideReplacements,
+        string jwtToken,
+        CancellationToken cancellationToken)
+    {
+        var levels = sideReplacements.GroupBy(r => r.LevelIndex).OrderBy(g => g.Key);
+        
+        foreach (var levelGroup in levels)
+        {
+            var levelReplacements = levelGroup.ToList();
+            
+            // Cancel old orders at this level
+            var cancelsToProcess = levelReplacements.Where(r => r.OldOrderId.HasValue).ToList();
+            if (cancelsToProcess.Any())
+            {
+                var cancelResults = await CancelOrderBatchAsync(cancelsToProcess, jwtToken, cancellationToken, isAtomicMode: false);
+                var successCount = cancelResults.Count(r => r.Success);
+                _logger.LogDebug("Level {Level}: Cancelled {Success}/{Total} orders",
+                    levelGroup.Key, successCount, cancelsToProcess.Count);
+            }
+            
+            // Wait between cancel and submit
+            if (_config.SequentialPeelDelayMs > 0)
+            {
+                await Task.Delay(_config.SequentialPeelDelayMs, cancellationToken);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Submit new orders at this level
+            await SubmitNewOrdersAsync(levelReplacements, jwtToken, cancellationToken);
+            
+            // Wait between levels
+            if (_config.SequentialPeelDelayMs > 0)
+            {
+                await Task.Delay(_config.SequentialPeelDelayMs, cancellationToken);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+    }
+    
+    /// <summary>
+    /// Execute order replacements with configurable behavior
+    /// UpdateBehaviorFlag=1: Atomic with side-aware self-trade prevention
+    /// UpdateBehaviorFlag=0: Sequential (cancel first, creates gap)
     /// </summary>
     private async Task ExecuteReplacementsAsync(
         List<OrderReplacement> replacements,
         string jwtToken,
         CancellationToken cancellationToken)
     {
-        // Check cancellation before starting replacements
         cancellationToken.ThrowIfCancellationRequested();
         
-        // Step 1: Cancel old orders in parallel (if they exist)
+        if (_config.UpdateBehaviorFlag == 1)
+        {
+            // Check for self-trade risk if prevention is enabled
+            if (_config.EnableSelfTradePrevention == 1)
+            {
+                var (bidsCross, asksCross) = DetectCrossing(replacements);
+                
+                if (bidsCross || asksCross)
+                {
+                    _logger.LogDebug("Self-trade risk detected - applying side-aware sequential peeling");
+                    
+                    var bidReplacements = replacements.Where(r => r.Side == ContractSide.Long).ToList();
+                    var askReplacements = replacements.Where(r => r.Side == ContractSide.Short).ToList();
+                    
+                    if (bidsCross && asksCross)
+                    {
+                        // Both sides cross - sequential peel both sides
+                        _logger.LogDebug("Both sides crossing - sequential peel on BOTH sides");
+                        _metrics.RecordStpBothSides();
+                        await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
+                        await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
+                    }
+                    else if (bidsCross)
+                    {
+                        // Bids crossing asks - peel ASKS (victims), atomic for BIDS (aggressors)
+                        _logger.LogDebug("Bids crossing - sequential peel ASKS (remove victims first), then atomic BIDS");
+                        _metrics.RecordStpBids();
+                        
+                        // Sequential peel asks (the side being crossed - remove victims first)
+                        await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
+                        
+                        // Atomic for bids (submit then cancel - now safe, no old asks to match)
+                        if (bidReplacements.Any())
+                        {
+                            await SubmitNewOrdersAsync(bidReplacements, jwtToken, cancellationToken);
+                            
+                            if (_config.AtomicReplacementDelayMs > 0)
+                            {
+                                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+                            }
+                            
+                            cancellationToken.ThrowIfCancellationRequested();
+                            await CancelOldOrdersAsync(bidReplacements, jwtToken, cancellationToken, isAtomicMode: true);
+                        }
+                    }
+                    else // asksCross
+                    {
+                        // Asks crossing bids - peel BIDS (victims), atomic for ASKS (aggressors)
+                        _logger.LogDebug("Asks crossing - sequential peel BIDS (remove victims first), then atomic ASKS");
+                        _metrics.RecordStpAsks();
+                        
+                        // Sequential peel bids (the side being crossed - remove victims first)
+                        await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
+                        
+                        // Atomic for asks (submit then cancel - now safe, no old bids to match)
+                        if (askReplacements.Any())
+                        {
+                            await SubmitNewOrdersAsync(askReplacements, jwtToken, cancellationToken);
+                            
+                            if (_config.AtomicReplacementDelayMs > 0)
+                            {
+                                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+                            }
+                            
+                            cancellationToken.ThrowIfCancellationRequested();
+                            await CancelOldOrdersAsync(askReplacements, jwtToken, cancellationToken, isAtomicMode: true);
+                        }
+                    }
+                    
+                    return;
+                }
+            }
+            
+            // Normal atomic mode - no crossing detected
+            _logger.LogDebug("Using ATOMIC order replacement strategy (maintains liquidity)");
+            
+            // Submit new orders first
+            await SubmitNewOrdersAsync(replacements, jwtToken, cancellationToken);
+            
+            // Wait for orderbook to process new orders before canceling old ones
+            if (_config.AtomicReplacementDelayMs > 0)
+            {
+                _logger.LogDebug("Waiting {DelayMs}ms for orderbook to process new orders before canceling old ones", 
+                    _config.AtomicReplacementDelayMs);
+                await Task.Delay(_config.AtomicReplacementDelayMs, cancellationToken);
+            }
+            
+            cancellationToken.ThrowIfCancellationRequested();
+            
+            // Then cancel old ones
+            await CancelOldOrdersAsync(replacements, jwtToken, cancellationToken, isAtomicMode: true);
+        }
+        else
+        {
+            _logger.LogDebug("Using SEQUENTIAL order replacement strategy (may create gaps)");
+            // Cancel old orders first, THEN submit new ones (original behavior)
+            await CancelOldOrdersAsync(replacements, jwtToken, cancellationToken, isAtomicMode: false);
+            cancellationToken.ThrowIfCancellationRequested();
+            await SubmitNewOrdersAsync(replacements, jwtToken, cancellationToken);
+        }
+    }
+    
+    /// <summary>
+    /// Cancel old orders in parallel with retry logic
+    /// </summary>
+    private async Task CancelOldOrdersAsync(
+        List<OrderReplacement> replacements,
+        string jwtToken,
+        CancellationToken cancellationToken,
+        bool isAtomicMode = false)
+    {
         var cancelsToProcess = replacements.Where(r => r.OldOrderId.HasValue).ToList();
         
-        if (cancelsToProcess.Any())
+        if (!cancelsToProcess.Any())
         {
-            _logger.LogDebug("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
-            
-            var cancelTasks = cancelsToProcess.Select(async replacement =>
-            {
-                try
-                {
-                    _logger.LogDebug("Cancelling {Side} order at level {Level}: {OrderId}",
-                        replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
-                    
-                    var orderIdToCancel = replacement.OldOrderId!.Value;
-                    await _orderService.CancelOrderAsync(
-                        orderIdToCancel,
-                        jwtToken,
-                        cancellationToken);
-                    
-                    // Clear the level in state manager (thread-safe)
-                    _stateManager.ClearLevel(replacement.Side, replacement.LevelIndex);
-                    
-                    _logger.LogDebug("Cancelled {Side} order at level {Level}: {OrderId}",
-                        replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
-                    
-                    return (Success: true, Replacement: replacement);
-                }
-                catch (HttpRequestException httpEx)
-                {
-                    _logger.LogError(httpEx, "HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
-                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement);
-                }
-                catch (OperationCanceledException)
-                {
-                    _logger.LogDebug("Cancelling {Side} order {OrderId} at level {Level} - operation cancelled during shutdown",
-                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
-                        replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement);
-                }
-            });
-            
-            var cancelResults = await Task.WhenAll(cancelTasks);
-            var successfulCancels = cancelResults.Count(r => r.Success);
-            var failedCancels = cancelResults.Count(r => !r.Success);
-            
-            _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
-                successfulCancels, failedCancels);
+            _logger.LogDebug("No orders to cancel");
+            return;
         }
         
-        // Check cancellation before submitting new orders
-        cancellationToken.ThrowIfCancellationRequested();
+        _logger.LogDebug("Cancelling {Count} orders in parallel", cancelsToProcess.Count);
         
-        // Step 2: Submit new orders in parallel
-        if (replacements.Any())
+        // First attempt
+        var cancelResults = await CancelOrderBatchAsync(cancelsToProcess, jwtToken, cancellationToken, isAtomicMode);
+        
+        var successfulCancels = cancelResults.Count(r => r.Success);
+        var failedCancels = cancelResults.Count(r => !r.Success);
+        
+        _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
+            successfulCancels, failedCancels);
+        
+        // Record metrics for first attempt
+        _metrics.RecordOrdersCanceled(successfulCancels);
+        
+        // Retry failed cancellations once
+        if (failedCancels > 0)
         {
-            _logger.LogDebug("Submitting {Count} orders in parallel", replacements.Count);
+            var failedReplacements = cancelResults.Where(r => !r.Success).Select(r => r.Replacement).ToList();
             
-            var submitTasks = replacements.Select(async replacement =>
+            _logger.LogDebug("Retrying {Count} failed cancellations after 50ms delay", failedReplacements.Count);
+            
+            try
             {
-                try
+                await Task.Delay(50, cancellationToken);
+                
+                var retryResults = await CancelOrderBatchAsync(failedReplacements, jwtToken, cancellationToken, isAtomicMode);
+                
+                var retrySuccesses = retryResults.Count(r => r.Success);
+                var retryFailures = retryResults.Count(r => !r.Success);
+                
+                _logger.LogDebug("Retry batch complete: {Success} succeeded, {Failed} failed",
+                    retrySuccesses, retryFailures);
+                
+                // Record metrics for retry
+                _metrics.RecordOrdersCanceled(retrySuccesses);
+                if (retryFailures > 0)
                 {
-                    var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
-                    var priceDecimal = PriceCalculator.FromBaseUnits(replacement.NewPrice, _config.TradingDecimals);
-                    var qtyDecimal = PriceCalculator.FromBaseUnits(replacement.NewQuantity, _config.TradingDecimals);
-                    var marginRequired = PriceCalculator.CalculateMargin(
-                        replacement.NewPrice,
-                        replacement.NewQuantity,
-                        marginFactorBase,
-                        _config.TradingDecimals,
-                        _config.SettlementDecimals);
-                    var marginDecimal = PriceCalculator.FromBaseUnits(marginRequired, _config.SettlementDecimals);
-                    
-                    _logger.LogDebug("Submitting {Side} order at level {Level}: Price=${Price:F2}, Qty={Quantity:F8}, Margin=${Margin:F2}",
-                        replacement.Side, replacement.LevelIndex, priceDecimal, qtyDecimal, marginDecimal);
-                    
-                    var response = await _orderService.SubmitLimitOrderAsync(
-                        side: replacement.Side,
-                        price: replacement.NewPrice,
-                        quantity: replacement.NewQuantity,
-                        marginFactor: marginFactorBase,
-                        clientOrderId: $"MM-{replacement.Side}-L{replacement.LevelIndex}-{DateTime.UtcNow.Ticks}",
-                        jwtToken: jwtToken,
-                        cancellationToken: cancellationToken);
-                    
-                    // Update state manager with new order (thread-safe)
-                    _stateManager.UpdateLevel(
-                        replacement.Side,
-                        replacement.LevelIndex,
-                        response.OrderId,
-                        replacement.NewPrice,
-                        replacement.NewQuantity);
-                    
-                    _logger.LogDebug("Placed {Side} order at level {Level}: OrderId={OrderId}, Status={Status}",
-                        replacement.Side, replacement.LevelIndex, response.OrderId, response.OrderStatus);
-                    
-                    return (Success: true, Replacement: replacement, OrderId: response.OrderId);
+                    _metrics.RecordOrdersCancelFailed(retryFailures);
                 }
-                catch (HttpRequestException httpEx)
+                
+                if (retryFailures > 0)
                 {
-                    _logger.LogError(httpEx, "HTTP error submitting {Side} order at level {Level} - API returned error, continuing",
-                        replacement.Side, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+                    _logger.LogDebug("{Count} orders could not be cancelled after retry (likely already filled/closed)",
+                        retryFailures);
                 }
-                catch (OperationCanceledException)
-                {
-                    _logger.LogDebug("Submitting {Side} order at level {Level} - operation cancelled during shutdown",
-                        replacement.Side, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "✗ Unexpected error submitting {Side} order at level {Level}, continuing",
-                        replacement.Side, replacement.LevelIndex);
-                    
-                    return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
-                }
-            });
-            
-            var submitResults = await Task.WhenAll(submitTasks);
-            var successfulSubmits = submitResults.Count(r => r.Success);
-            var failedSubmits = submitResults.Count(r => !r.Success);
-            
-            _logger.LogDebug("Submit batch complete: {Success} succeeded, {Failed} failed",
-                successfulSubmits, failedSubmits);
-            
-            if (failedSubmits > 0)
-            {
-                _logger.LogWarning("Market maker running with partial ladder: {ActiveOrders}/{TotalOrders} orders active",
-                    successfulSubmits, replacements.Count);
             }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Retry cancelled during shutdown");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Execute a batch of order cancellations in parallel
+    /// </summary>
+    private async Task<(bool Success, OrderReplacement Replacement)[]> CancelOrderBatchAsync(
+        List<OrderReplacement> replacements,
+        string jwtToken,
+        CancellationToken cancellationToken,
+        bool isAtomicMode)
+    {
+        var cancelTasks = replacements.Select(async replacement =>
+        {
+            try
+            {
+                _logger.LogDebug("Cancelling {Side} order at level {Level}: {OrderId}",
+                    replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
+                
+                var orderIdToCancel = replacement.OldOrderId!.Value;
+                await _orderService.CancelOrderAsync(
+                    orderIdToCancel,
+                    jwtToken,
+                    cancellationToken);
+                
+                // Only clear level in sequential mode
+                // In atomic mode, the level already has the new order ID
+                if (!isAtomicMode)
+                {
+                    _stateManager.ClearLevel(replacement.Side, replacement.LevelIndex);
+                }
+                
+                _logger.LogDebug("Cancelled {Side} order at level {Level}: {OrderId}",
+                    replacement.Side, replacement.LevelIndex, replacement.OldOrderId);
+                
+                return (Success: true, Replacement: replacement);
+            }
+            catch (HttpRequestException httpEx)
+            {
+                _logger.LogDebug(httpEx, "HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
+                    replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Cancelling {Side} order {OrderId} at level {Level} - operation cancelled during shutdown",
+                    replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
+                    replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement);
+            }
+        });
+        
+        return await Task.WhenAll(cancelTasks);
+    }
+    
+    /// <summary>
+    /// Submit new orders in parallel
+    /// </summary>
+    private async Task SubmitNewOrdersAsync(
+        List<OrderReplacement> replacements,
+        string jwtToken,
+        CancellationToken cancellationToken)
+    {
+        if (!replacements.Any())
+        {
+            _logger.LogDebug("No orders to submit");
+            return;
+        }
+        
+        _logger.LogDebug("Submitting {Count} orders in parallel", replacements.Count);
+        
+        var submitTasks = replacements.Select(async replacement =>
+        {
+            try
+            {
+                var marginFactorBase = (ulong)(_config.InitialMarginFactor * 1_000_000);
+                var priceDecimal = PriceCalculator.FromBaseUnits(replacement.NewPrice, _config.TradingDecimals);
+                var qtyDecimal = PriceCalculator.FromBaseUnits(replacement.NewQuantity, _config.TradingDecimals);
+                var marginRequired = PriceCalculator.CalculateMargin(
+                    replacement.NewPrice,
+                    replacement.NewQuantity,
+                    marginFactorBase,
+                    _config.TradingDecimals,
+                    _config.SettlementDecimals);
+                var marginDecimal = PriceCalculator.FromBaseUnits(marginRequired, _config.SettlementDecimals);
+                
+                _logger.LogDebug("Submitting {Side} order at level {Level}: Price=${Price:F2}, Qty={Quantity:F8}, Margin=${Margin:F2}",
+                    replacement.Side, replacement.LevelIndex, priceDecimal, qtyDecimal, marginDecimal);
+                
+                var response = await _orderService.SubmitLimitOrderAsync(
+                    side: replacement.Side,
+                    price: replacement.NewPrice,
+                    quantity: replacement.NewQuantity,
+                    marginFactor: marginFactorBase,
+                    clientOrderId: $"MM-{replacement.Side}-L{replacement.LevelIndex}-{DateTime.UtcNow.Ticks}",
+                    jwtToken: jwtToken,
+                    cancellationToken: cancellationToken);
+                
+                // Update state manager with new order (thread-safe)
+                _stateManager.UpdateLevel(
+                    replacement.Side,
+                    replacement.LevelIndex,
+                    response.OrderId,
+                    replacement.NewPrice,
+                    replacement.NewQuantity);
+                
+                _logger.LogDebug("Placed {Side} order at level {Level}: OrderId={OrderId}, Status={Status}",
+                    replacement.Side, replacement.LevelIndex, response.OrderId, response.OrderStatus);
+                
+                return (Success: true, Replacement: replacement, OrderId: response.OrderId);
+            }
+            catch (HttpRequestException httpEx)
+            {
+                _logger.LogError(httpEx, "HTTP error submitting {Side} order at level {Level} - API returned error, continuing",
+                    replacement.Side, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogDebug("Submitting {Side} order at level {Level} - operation cancelled during shutdown",
+                    replacement.Side, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "✗ Unexpected error submitting {Side} order at level {Level}, continuing",
+                    replacement.Side, replacement.LevelIndex);
+                
+                return (Success: false, Replacement: replacement, OrderId: Guid.Empty);
+            }
+        });
+        
+        var submitResults = await Task.WhenAll(submitTasks);
+        var successfulSubmits = submitResults.Count(r => r.Success);
+        var failedSubmits = submitResults.Count(r => !r.Success);
+        
+        _logger.LogDebug("Submit batch complete: {Success} succeeded, {Failed} failed",
+            successfulSubmits, failedSubmits);
+        
+        // Record metrics
+        _metrics.RecordOrdersPlaced(successfulSubmits);
+        if (failedSubmits > 0)
+        {
+            _metrics.RecordOrdersSubmitFailed(failedSubmits);
+        }
+        
+        if (failedSubmits > 0)
+        {
+            _logger.LogWarning("Market maker running with partial ladder: {ActiveOrders}/{TotalOrders} orders active",
+                successfulSubmits, replacements.Count);
         }
     }
     //

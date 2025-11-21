@@ -28,7 +28,6 @@ services:
       - BASE_SPREAD_BPS=10
       - LEVEL_SPACING_BPS=5
       - INITIAL_MARGIN_FACTOR=0.1
-      - BALANCE_UTILIZATION=0.8
       
       # Risk Limits
       - MAX_POSITION_SIZE=1000

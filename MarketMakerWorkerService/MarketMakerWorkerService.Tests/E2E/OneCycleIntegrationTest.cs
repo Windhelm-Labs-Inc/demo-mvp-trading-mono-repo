@@ -110,7 +110,7 @@ public class OneCycleIntegrationTest : IDisposable
     /// ONE CYCLE TEST - Places real orders and cancels them
     /// This is NOT a unit test - it interacts with REAL APIs and REAL money
     /// </summary>
-    [Fact]
+    [Fact(Skip = "Explicit E2E test - run with: dotnet test --filter FullyQualifiedName~OneCycle_PlaceAndCancelOrders_Success")]
     public async Task OneCycle_PlaceAndCancelOrders_Success()
     {
         // ====================================================================
