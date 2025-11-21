@@ -249,7 +249,7 @@ public class Worker : BackgroundService
                     // Run settlement check after token refresh if enabled
                     if (_config.ContinuousSettlement == 1 && _settlementService != null)
                     {
-                        _logger.LogDebug("Running post-refresh settlement check...");
+                        _logger.LogInformation("Running post-refresh settlement check...");
                         await RunSettlementCheckAsync(token, stoppingToken);
                     }
                 }
@@ -293,7 +293,7 @@ public class Worker : BackgroundService
         
         try
         {
-            _logger.LogDebug("Checking for settleable positions");
+            _logger.LogInformation("Checking for settleable positions");
             
             var result = await _settlementService.CheckAndSettlePositionsAsync(
                 token, stoppingToken);
@@ -301,12 +301,12 @@ public class Worker : BackgroundService
             if (result.Success && result.SettlementId != null)
             {
                 _logger.LogInformation(
-                    "✓ Settled {Qty} units across {Count} positions (Settlement ID: {SettlementId})",
+                    "Settled {Qty} units across {Count} positions (Settlement ID: {SettlementId})",
                     result.QuantitySettled, result.PositionsSettled, result.SettlementId);
             }
             else if (result.Success)
             {
-                _logger.LogDebug("No settlement needed: {Message}", result.ErrorMessage ?? "No positions");
+                _logger.LogInformation("No settlement needed: {Message}", result.ErrorMessage ?? "No positions");
             }
             else
             {

@@ -185,5 +185,27 @@ public class MarketMakerConfiguration
     /// Default: 0
     /// </summary>
     public int ContinuousSettlement { get; set; } = 0;
+    
+    // ===========================
+    // Metrics Configuration
+    // ===========================
+    /// <summary>
+    /// Enable OpenTelemetry metrics export to Azure Application Insights
+    /// 1 = Enabled, 0 = Disabled
+    /// Default: 0
+    /// </summary>
+    public int EnableMetrics { get; set; } = 0;
+
+    /// <summary>
+    /// OpenTelemetry metrics export interval in milliseconds
+    /// Default: 60000 (60 seconds)
+    /// </summary>
+    public int MetricsExportIntervalMs { get; set; } = 60000;
+
+    /// <summary>
+    /// Azure Application Insights connection string
+    /// </summary>
+    public string ApplicationInsightsConnectionString { get; set; } = 
+        "InstrumentationKey=01402b01-5969-41ad-91cc-b51cf86ba96e;IngestionEndpoint=https://eastus-8.in.applicationinsights.azure.com/;LiveEndpoint=https://eastus.livediagnostics.monitor.azure.com/;ApplicationId=2a91edf1-7d8a-462b-b346-5cb0fb6af5ad";
 }
 

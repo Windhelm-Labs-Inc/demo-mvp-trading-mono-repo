@@ -16,6 +16,7 @@ public class BasicMarketMakerStrategy
     private readonly IOrderService _orderService;
     private readonly IAccountService _accountService;
     private readonly OrderStateManager _stateManager;
+    private readonly MetricsService _metrics;
     private readonly ILogger<BasicMarketMakerStrategy> _logger;
     
     private readonly SemaphoreSlim _strategyLock = new(1, 1);
@@ -28,6 +29,7 @@ public class BasicMarketMakerStrategy
         IOrderService orderService,
         IAccountService accountService,
         OrderStateManager stateManager,
+        MetricsService metrics,
         ILogger<BasicMarketMakerStrategy> logger)
     {
         _config = config.Value;
@@ -35,6 +37,7 @@ public class BasicMarketMakerStrategy
         _orderService = orderService;
         _accountService = accountService;
         _stateManager = stateManager;
+        _metrics = metrics;
         _logger = logger;
         
         // Use configured liquidity shape
@@ -164,10 +167,12 @@ public class BasicMarketMakerStrategy
             await ExecuteReplacementsAsync(replacements, token, cancellationToken);
             
             _logger.LogDebug("Successfully processed price update: ${Price:F2}", indexPrice);
+            _metrics.RecordIndexUpdateSuccess();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing index price update: ${Price:F2}", indexPrice);
+            _metrics.RecordIndexUpdateFailure();
             throw;
         }
         finally
@@ -311,6 +316,7 @@ public class BasicMarketMakerStrategy
                     {
                         // Both sides cross - sequential peel both sides
                         _logger.LogDebug("Both sides crossing - sequential peel on BOTH sides");
+                        _metrics.RecordStpBothSides();
                         await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
                         await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
                     }
@@ -318,6 +324,7 @@ public class BasicMarketMakerStrategy
                     {
                         // Bids crossing asks - peel ASKS (victims), atomic for BIDS (aggressors)
                         _logger.LogDebug("Bids crossing - sequential peel ASKS (remove victims first), then atomic BIDS");
+                        _metrics.RecordStpBids();
                         
                         // Sequential peel asks (the side being crossed - remove victims first)
                         await SequentialPeelBySideAsync(askReplacements, jwtToken, cancellationToken);
@@ -340,6 +347,7 @@ public class BasicMarketMakerStrategy
                     {
                         // Asks crossing bids - peel BIDS (victims), atomic for ASKS (aggressors)
                         _logger.LogDebug("Asks crossing - sequential peel BIDS (remove victims first), then atomic ASKS");
+                        _metrics.RecordStpAsks();
                         
                         // Sequential peel bids (the side being crossed - remove victims first)
                         await SequentialPeelBySideAsync(bidReplacements, jwtToken, cancellationToken);
@@ -420,6 +428,9 @@ public class BasicMarketMakerStrategy
         _logger.LogDebug("Cancel batch complete: {Success} succeeded, {Failed} failed",
             successfulCancels, failedCancels);
         
+        // Record metrics for first attempt
+        _metrics.RecordOrdersCanceled(successfulCancels);
+        
         // Retry failed cancellations once
         if (failedCancels > 0)
         {
@@ -439,9 +450,16 @@ public class BasicMarketMakerStrategy
                 _logger.LogDebug("Retry batch complete: {Success} succeeded, {Failed} failed",
                     retrySuccesses, retryFailures);
                 
+                // Record metrics for retry
+                _metrics.RecordOrdersCanceled(retrySuccesses);
                 if (retryFailures > 0)
                 {
-                    _logger.LogWarning("{Count} orders could not be cancelled after retry (likely already filled/closed)",
+                    _metrics.RecordOrdersCancelFailed(retryFailures);
+                }
+                
+                if (retryFailures > 0)
+                {
+                    _logger.LogDebug("{Count} orders could not be cancelled after retry (likely already filled/closed)",
                         retryFailures);
                 }
             }
@@ -488,7 +506,7 @@ public class BasicMarketMakerStrategy
             }
             catch (HttpRequestException httpEx)
             {
-                _logger.LogError(httpEx, "HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
+                _logger.LogDebug(httpEx, "HTTP error cancelling {Side} order {OrderId} at level {Level} - API returned error, continuing",
                     replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                 
                 return (Success: false, Replacement: replacement);
@@ -502,7 +520,7 @@ public class BasicMarketMakerStrategy
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
+                _logger.LogDebug(ex, "Unexpected error cancelling {Side} order {OrderId} at level {Level}, continuing",
                     replacement.Side, replacement.OldOrderId, replacement.LevelIndex);
                 
                 return (Success: false, Replacement: replacement);
@@ -597,6 +615,13 @@ public class BasicMarketMakerStrategy
         
         _logger.LogDebug("Submit batch complete: {Success} succeeded, {Failed} failed",
             successfulSubmits, failedSubmits);
+        
+        // Record metrics
+        _metrics.RecordOrdersPlaced(successfulSubmits);
+        if (failedSubmits > 0)
+        {
+            _metrics.RecordOrdersSubmitFailed(failedSubmits);
+        }
         
         if (failedSubmits > 0)
         {

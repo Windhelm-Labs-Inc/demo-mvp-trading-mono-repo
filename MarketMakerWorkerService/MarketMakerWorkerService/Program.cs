@@ -1,7 +1,9 @@
+using Azure.Monitor.OpenTelemetry.Exporter;
 using DotNetEnv;
 using MarketMakerWorkerService;
 using MarketMakerWorkerService.Configuration;
 using MarketMakerWorkerService.Services;
+using OpenTelemetry.Metrics;
 using Serilog;
 using Serilog.Formatting.Compact;
 
@@ -42,6 +44,47 @@ builder.Services.AddSerilog();
 builder.Services.Configure<MarketMakerConfiguration>(
     builder.Configuration.GetSection("MarketMaker"));
 
+// Configure OpenTelemetry Metrics (Azure Application Insights)
+var enableMetrics = builder.Configuration.GetValue<int>("MarketMaker:EnableMetrics", 0);
+
+if (enableMetrics == 1)
+{
+    var metricsExportInterval = builder.Configuration.GetValue<int>("MarketMaker:MetricsExportIntervalMs", 60000);
+    var appInsightsConnectionString = builder.Configuration.GetValue<string>("MarketMaker:ApplicationInsightsConnectionString");
+
+    if (!string.IsNullOrEmpty(appInsightsConnectionString))
+    {
+        builder.Services.AddOpenTelemetry()
+            .WithMetrics(metrics =>
+            {
+                metrics.AddMeter("MarketMaker");
+                
+                // Azure Monitor exporter (uses internal ~60s interval)
+                metrics.AddAzureMonitorMetricExporter(options =>
+                {
+                    options.ConnectionString = appInsightsConnectionString;
+                });
+                
+                // Console exporter for local visibility (uses configured interval)
+                metrics.AddConsoleExporter((exporterOptions, metricReaderOptions) =>
+                {
+                    metricReaderOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = metricsExportInterval;
+                });
+            });
+        
+        Log.Information("Metrics enabled: Azure App Insights + Console (console interval: {Interval}ms, Azure uses internal ~60s)", 
+            metricsExportInterval);
+    }
+    else
+    {
+        Log.Warning("Azure Application Insights connection string not configured - metrics disabled");
+    }
+}
+else
+{
+    Log.Information("OpenTelemetry metrics disabled (ENABLE_METRICS=0)");
+}
+
 // Register HttpClient for API calls
 builder.Services.AddHttpClient("PerpetualsAPI", (serviceProvider, client) =>
 {
@@ -51,6 +94,9 @@ builder.Services.AddHttpClient("PerpetualsAPI", (serviceProvider, client) =>
     client.DefaultRequestHeaders.Add("Accept", "application/json");
     client.DefaultRequestHeaders.Add("User-Agent", "MarketMakerWorkerService/1.0");
 });
+
+// Register metrics service
+builder.Services.AddSingleton<MetricsService>();
 
 // Register Stage 1 services
 builder.Services.AddSingleton<IAuthenticationService, AuthenticationService>();
@@ -84,6 +130,17 @@ logger.LogInformation("API Base URL: {ApiBaseUrl}", config.ApiBaseUrl);
 logger.LogInformation("Account ID: {AccountId}", config.AccountId);
 logger.LogInformation("Ledger ID: {LedgerId}", config.LedgerId);
 logger.LogInformation("Redis Index Key: {RedisIndexKey}", config.RedisIndexKey);
+
+// Log metrics configuration status
+if (config.EnableMetrics == 1)
+{
+    logger.LogInformation("Metrics: ENABLED → Azure Application Insights (export interval: {Interval}ms)", 
+        config.MetricsExportIntervalMs);
+}
+else
+{
+    logger.LogInformation("Metrics: DISABLED");
+}
 
 // Validate critical configuration
 if (string.IsNullOrEmpty(config.AccountId))
