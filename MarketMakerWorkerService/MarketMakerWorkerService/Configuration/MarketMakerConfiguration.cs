@@ -137,5 +137,16 @@ public class MarketMakerConfiguration
     /// Capital utilization ratio (0.80 = use 80% of available capital)
     /// </summary>
     public decimal BalanceUtilization { get; set; } = 0.80m;
+    
+    // ===========================
+    // Order Update Strategy
+    // ===========================
+    /// <summary>
+    /// Order update behavior flag
+    /// 1 = Atomic replacement (submit new orders first, then cancel old - maintains continuous liquidity)
+    /// 0 = Sequential replacement (cancel old orders first, then submit new - creates temporary gaps)
+    /// Default: 1 (traditional sequential behavior)
+    /// </summary>
+    public int UpdateBehaviorFlag { get; set; } = 1;
 }
 
